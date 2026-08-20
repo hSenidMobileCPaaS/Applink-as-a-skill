@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Applink platform support
+    url: https://dev.applink.com.bd
+    about: For account, provisioning, or platform questions, contact Applink directly at support@applink.com.bd.
+  - name: Security issue
+    url: https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill/blob/main/SECURITY.md
+    about: Do not open a public issue for anything involving a real credential.

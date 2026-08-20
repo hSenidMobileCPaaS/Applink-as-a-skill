@@ -1,0 +1,2 @@
+description = "Diagnose a failing Applink call or callback"
+prompt = "Diagnose this Applink problem: {{args}}. Run `node tools/applink.mjs diagnose` with the symptom, and `node tools/applink.mjs code <statusCode>` if there is a code. Remember Applink returns HTTP 200 for failures, so first confirm the code is reading statusCode at all — and that it is not treating P1003 as success. Only twenty-nine status codes are published; a code outside that list in the error handling came from somewhere else. Give the most likely cause and the specific fix."

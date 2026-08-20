@@ -1,0 +1,2 @@
+description = "Quick reference for the Applink skill"
+prompt = "Show the Applink skill quick reference from the applink-help skill: the available commands, the services covered, and which reference document covers what."

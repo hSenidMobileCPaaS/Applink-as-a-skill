@@ -1,0 +1,7 @@
+{
+  "name": "applink",
+  "version": "1.0.0",
+  "description": "Applink telco integration skills — SMS, USSD, Subscription, OTP and CaaS charging.",
+  "skills": "./skills/",
+  "rules": "./.qoder/rules/"
+}

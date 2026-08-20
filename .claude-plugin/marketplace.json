@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "applink",
+  "description": "Applink telco integration skills for AI agents — SMS, USSD, Subscription, OTP and CaaS charging.",
+  "owner": {
+    "name": "hSenid Mobile Solutions",
+    "url": "https://www.hsenidmobile.com"
+  },
+  "plugins": [
+    {
+      "name": "applink",
+      "description": "Build correct Applink integrations. Exact API contracts, the two-step OTP charging flow, callback handlers, status-code handling, credential hygiene and go-live checks.",
+      "source": "./",
+      "category": "integrations"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "name": "applink-skill",
+  "version": "1.0.0",
+  "description": "Agent skill for building correct Applink integrations — SMS, USSD, Subscription, OTP and CaaS charging on hSenid Mobile's Bangladesh telco platform.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "keywords": [
+    "applink",
+    "banglalink",
+    "bangladesh",
+    "telco",
+    "sms",
+    "ussd",
+    "subscription",
+    "otp",
+    "caas",
+    "direct-carrier-billing",
+    "agent-skills",
+    "ai-agents",
+    "claude-code",
+    "cursor-rules"
+  ],
+  "homepage": "https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill/issues"
+  },
+  "bin": {
+    "applink": "./tools/applink.mjs"
+  },
+  "files": [
+    "SKILL.md",
+    "AGENTS.md",
+    "catalog/",
+    "references/",
+    "skills/",
+    "commands/",
+    "templates/",
+    "tools/",
+    "scripts/",
+    "assets/",
+    "LICENSE"
+  ],
+  "scripts": {
+    "applink": "node tools/applink.mjs",
+    "curl": "node tools/applink.mjs curl",
+    "test": "node --test tests/*.test.js",
+    "sync": "node scripts/sync-rules.mjs && node scripts/build-curl-reference.mjs",
+    "check": "node scripts/sync-rules.mjs --check && node scripts/build-curl-reference.mjs --check && npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": {
+    "name": "hSenid Mobile Solutions",
+    "url": "https://www.hsenidmobile.com"
+  },
+  "private": true
+}

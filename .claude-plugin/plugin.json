@@ -1,0 +1,24 @@
+{
+  "name": "applink",
+  "version": "1.0.0",
+  "description": "Build correct Applink integrations — SMS, USSD, Subscription, OTP and CaaS charging on hSenid Mobile's Bangladesh telco platform.",
+  "author": {
+    "name": "hSenid Mobile Solutions",
+    "url": "https://www.hsenidmobile.com"
+  },
+  "homepage": "https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill",
+  "license": "UNLICENSED",
+  "keywords": [
+    "applink",
+    "telco",
+    "sms",
+    "ussd",
+    "subscription",
+    "caas",
+    "otp",
+    "bangladesh",
+    "banglalink"
+  ],
+  "skills": "./skills/",
+  "commands": "./commands/"
+}

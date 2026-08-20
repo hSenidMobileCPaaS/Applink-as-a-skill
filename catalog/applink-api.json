@@ -1,0 +1,1868 @@
+{
+  "$schema": "./applink-api.schema.json",
+  "catalogVersion": "1.0.0",
+  "source": "https://dev.applink.com.bd/API_Documentation/docs/hSenidMobile_tap_api.html",
+  "platform": {
+    "name": "Applink",
+    "operator": "Banglalink",
+    "market": "Bangladesh",
+    "portal": "https://user.applink.com.bd",
+    "developerPortal": "https://dev.applink.com.bd",
+    "docs": "https://dev.applink.com.bd/API_Documentation/docs/hSenidMobile_tap_api.html",
+    "support": {
+      "email": "support@applink.com.bd"
+    }
+  },
+  "operators": [
+    {
+      "name": "Banglalink",
+      "market": "Bangladesh",
+      "countryCode": "880",
+      "note": "MSISDNs are addressed as tel:880XXXXXXXXXX. The platform's published samples use 88019… and 88014… numbers. Confirm in the portal which operators your application is provisioned for before assuming reach."
+    }
+  ],
+  "baseUrls": {
+    "primary": "https://api.applink.com.bd",
+    "docs": "https://dev.applink.com.bd/API_Documentation/docs/hSenidMobile_tap_api.html",
+    "egressIpCheck": "https://api.ipify.org",
+    "configuration": "Configure one URL per provisioned service (APPLINK_SMS_SEND_URL, APPLINK_USSD_SEND_URL, …). An unset endpoint means that API is not enabled on the application, and the client should refuse to call it rather than fail with E1309 at the platform. See templates/.env.example.",
+    "egressIpNote": "Applink publishes no IP-echo endpoint of its own. Any public echo service works — run it on the server that will make the calls, not on a laptop."
+  },
+  "conventions": {
+    "method": "POST",
+    "contentType": "application/json;charset=utf-8",
+    "auth": {
+      "type": "body-credentials",
+      "fields": ["applicationId", "password"],
+      "note": "Every outbound request carries applicationId and password in the JSON body. There are no headers, tokens or signatures. The password is the API key emailed to the registered address when the application is approved."
+    },
+    "addressing": {
+      "format": "tel:<msisdn>",
+      "rules": [
+        "Always tel:-prefixed. Send tel:8801959979376 — the form used by the subscription, OTP and CaaS samples.",
+        "The published SMS samples write the same address as tel:+8801959979376. Both forms appear in the platform's own documentation; normalise to one in a single helper and, if an SMS send returns E1325, try the other form and report it to support.",
+        "May be a masked value when number masking is provisioned. Treat it as opaque — do not parse it, strip it, or assume a length.",
+        "tel:all broadcasts to the entire subscribed base (SMS send only)."
+      ]
+    },
+    "responseEnvelope": {
+      "always": ["statusCode", "statusDetail"],
+      "common": ["version", "requestId"],
+      "criticalNote": "Applink returns HTTP 200 for application-level failures. Branch on statusCode, never on the HTTP status alone. S1000 is success; P1003 on CaaS OTP generation means the OTP was dispatched and the charge is not complete yet."
+    },
+    "callbackAck": {
+      "statusCode": "S1000",
+      "statusDetail": "Success"
+    },
+    "platformName": "TAP",
+    "platformNameNote": "requestId and sessionId are described in the documentation as unique 'within TAP' — the telco application platform that Applink runs on. It is the same system; quote those identifiers to support."
+  },
+  "services": [
+    {
+      "id": "sms-send",
+      "envVar": "APPLINK_SMS_SEND_URL",
+      "name": "SMS Send",
+      "aliases": ["sms", "mt-sms", "send-sms"],
+      "category": "sms",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/sms/send",
+      "summary": "Send an MT (Mobile Terminated) SMS to one or more subscribers.",
+      "reference": "references/02-sms.md",
+      "parameters": [
+        {
+          "name": "version",
+          "type": "string",
+          "required": true,
+          "description": "API version, numbered 1.0, 2.0 and so on. If specified in the request the same version is returned in the response; if omitted the latest version is used."
+        },
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "description": "Content of the message to send. Messages over the limit are broken up by the platform before sending."
+        },
+        {
+          "name": "destinationAddresses",
+          "type": "string[]",
+          "required": true,
+          "description": "Array of tel:-prefixed destination addresses. Always an array, even for one recipient. tel:all sends to the subscribed base of the application. May be a masked value depending on the application type."
+        },
+        {
+          "name": "sourceAddress",
+          "type": "string",
+          "required": false,
+          "description": "Address the message appears to come from — a provisioned alias such as a shortcode, or a tel:-prefixed address."
+        },
+        {
+          "name": "deliveryStatusRequest",
+          "type": "enum",
+          "required": false,
+          "enum": ["0", "1"],
+          "description": "0 = delivery report not required, 1 = delivery report required. A delivery report arrives at your SMS report callback URL."
+        },
+        {
+          "name": "encoding",
+          "type": "enum",
+          "required": false,
+          "enum": ["0", "240", "245"],
+          "description": "Encoding scheme used in the message. 0 = Text, 240 = Flash SMS, 245 = Binary. Defaults to Text. With Binary the message content must be hex encoded."
+        },
+        {
+          "name": "binaryHeader",
+          "type": "string",
+          "required": false,
+          "description": "Hex-encoded binary header, for advanced message types where the header is supplied by the application. Only meaningful with encoding 245."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version echoed from the request."
+        },
+        {
+          "name": "requestId",
+          "type": "string",
+          "description": "Uniquely identifies this request within the platform. Persist it — support traces on it, and delivery reports carry it."
+        },
+        {
+          "name": "destinationResponses",
+          "type": "object[]",
+          "description": "One entry per address in the request. A multi-recipient send can partially succeed, so branch on each entry's statusCode, not only the top-level one.",
+          "fields": [
+            {
+              "name": "timeStamp",
+              "type": "string",
+              "description": "When the platform processed this recipient."
+            },
+            {
+              "name": "address",
+              "type": "string",
+              "description": "The tel:-prefixed recipient this entry reports on."
+            },
+            {
+              "name": "messageId",
+              "type": "string",
+              "description": "Per-recipient message identifier."
+            },
+            {
+              "name": "statusCode",
+              "type": "string",
+              "description": "Outcome for this recipient alone."
+            },
+            {
+              "name": "statusDetail",
+              "type": "string",
+              "description": "Human-readable outcome for this recipient."
+            }
+          ]
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request. S1000 on success."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request."
+        }
+      ],
+      "sampleRequest": {
+        "version": "1.0",
+        "message": "Hello",
+        "destinationAddresses": ["tel:8801959979376"],
+        "sourceAddress": "77000",
+        "deliveryStatusRequest": "1",
+        "encoding": "0"
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "requestId": "101901031657410007",
+        "destinationResponses": [
+          {
+            "timeStamp": "20190103165801",
+            "address": "tel:8801959979376",
+            "messageId": "101901031657410007",
+            "statusCode": "S1000",
+            "statusDetail": "Success"
+          }
+        ],
+        "statusCode": "S1000",
+        "statusDetail": "Success."
+      },
+      "statusCodes": [
+        "S1000", "E1303", "E1308", "E1309", "E1311", "E1312", "E1313", "E1315",
+        "E1317", "E1318", "E1319", "E1325", "E1331", "E1334", "E1335", "E1341",
+        "E1342", "E1343", "E1601", "E1603"
+      ],
+      "rules": [
+        "destinationAddresses is always an array, even for a single recipient.",
+        "Guard tel:all behind a deliberate, separately-authorised code path, and check the base size first.",
+        "sourceAddress must be a provisioned alias — an arbitrary value fails with E1331.",
+        "Only set deliveryStatusRequest to 1 if you consume the SMS report callback.",
+        "Keep under 160 GSM-7 characters for a single part. Bangla text is UCS-2, so budget 70 characters per part; the platform splits longer messages and each part is charged.",
+        "The published sample writes the destination as tel:+8801959979376. Send tel:8801959979376 for consistency with every other Applink API, and normalise in one helper."
+      ]
+    },
+    {
+      "id": "ussd-send",
+      "envVar": "APPLINK_USSD_SEND_URL",
+      "name": "USSD Send",
+      "aliases": ["ussd", "menu", "screen"],
+      "category": "ussd",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/ussd/send",
+      "summary": "Send a USSD screen to a handset inside an open session.",
+      "reference": "references/03-ussd.md",
+      "parameters": [
+        {
+          "name": "version",
+          "type": "string",
+          "required": true,
+          "description": "API version, numbered 1.0, 2.0 and so on. If specified in the request the same version is returned in the response."
+        },
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "description": "Content of the message sent by the application — the screen text the subscriber sees."
+        },
+        {
+          "name": "sessionId",
+          "type": "string",
+          "required": true,
+          "description": "Unique number the USSD gateway assigns to the application for the duration of the session. It is maintained across every message in a single session — echo the one you were given, never generate your own."
+        },
+        {
+          "name": "ussdOperation",
+          "type": "enum",
+          "required": true,
+          "enum": ["mo-init", "mo-cont", "mt-init", "mt-cont", "mt-fin"],
+          "description": "USSD operation. The application assigns mt-init when it initiates a session, mt-cont for any message that follows an init, and mt-fin when the session ends on a final message. mo-init and mo-cont are assigned by the platform on inbound messages."
+        },
+        {
+          "name": "destinationAddress",
+          "type": "string",
+          "required": true,
+          "description": "Destination address — a tel:-prefixed telephone number, which may be a masked value depending on the application type."
+        },
+        {
+          "name": "encoding",
+          "type": "enum",
+          "required": false,
+          "enum": ["440"],
+          "description": "Encoding scheme used in the message. 440 = plain ASCII characters."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version echoed from the request."
+        },
+        {
+          "name": "requestId",
+          "type": "string",
+          "description": "Uniquely identifies this request within the platform."
+        },
+        {
+          "name": "timeStamp",
+          "type": "string",
+          "description": "Processed timestamp."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request. S1000 on success."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request."
+        }
+      ],
+      "sampleRequest": {
+        "version": "1.0",
+        "message": "1. Press One\n2. Press two\n3. Press three\n4. Exit",
+        "sessionId": "1330929317043",
+        "ussdOperation": "mt-cont",
+        "destinationAddress": "tel:8801959979376",
+        "encoding": "440"
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "requestId": "101901031657410007",
+        "timeStamp": "20190103165801",
+        "statusCode": "S1000",
+        "statusDetail": "Success."
+      },
+      "statusCodes": [
+        "S1000", "E1303", "E1308", "E1309", "E1312", "E1313", "E1315", "E1317",
+        "E1318", "E1319", "E1325", "E1334", "E1341", "E1342", "E1343", "E1601", "E1603"
+      ],
+      "rules": [
+        "Echo the sessionId the platform sent you. A sessionId you invented orphans the session and the subscriber sees nothing.",
+        "End terminal screens with mt-fin. Continuing to send mt-cont leaves the session hanging until the network times it out.",
+        "Screens are plain ASCII (encoding 440) — no emoji, no Bangla script, no smart quotes. Sanitise generated text before sending.",
+        "Keep each screen under about 160 characters and the tree two or three levels deep. Sessions time out in seconds.",
+        "Never charge inline inside a USSD session. Acknowledge with mt-fin, charge asynchronously, and SMS the result."
+      ]
+    },
+    {
+      "id": "subscription-register",
+      "envVar": "APPLINK_SUBSCRIPTION_SEND_URL",
+      "name": "Subscription Register",
+      "aliases": ["register", "subscribe", "opt-in", "opt in", "sub"],
+      "category": "subscription",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/subscription/send",
+      "summary": "Opt a subscriber in to the application. Same endpoint as unregister, with action \"1\".",
+      "reference": "references/04-subscription.md",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "required": true,
+          "description": "The subscriber's tel:-prefixed MSISDN, a unique identifier. May be a masked value depending on the application type. Only a single value per request."
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "required": true,
+          "enum": ["0", "1"],
+          "description": "0 = user unsubscription, 1 = user subscription. Sent as a string."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request."
+        },
+        {
+          "name": "subscriptionStatus",
+          "type": "string",
+          "description": "Resulting subscription state, for example REGISTERED or UNREGISTERED. This — not an error code — is how you confirm the outcome, so read it on every response."
+        }
+      ],
+      "sampleRequest": {
+        "subscriberId": "tel:8801959979376",
+        "action": "1"
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "statusCode": "S1000",
+        "statusDetail": "Success.",
+        "subscriptionStatus": "REGISTERED"
+      },
+      "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1317", "E1325", "E1601", "E1603"],
+      "rules": [
+        "Capture explicit consent before every register, and store who consented, when, through which channel, and the exact wording shown.",
+        "Disclose the amount, currency and frequency before subscribing anyone.",
+        "Applink publishes no 'already registered' benign code. Make register idempotent by reading subscriptionStatus in the response instead of special-casing an error code — a repeat register that comes back REGISTERED is the state you wanted.",
+        "Mirror subscription state in your own database from the subscription notification callback rather than re-querying per request."
+      ]
+    },
+    {
+      "id": "subscription-unregister",
+      "envVar": "APPLINK_SUBSCRIPTION_SEND_URL",
+      "name": "Subscription Unregister",
+      "aliases": ["unregister", "unsubscribe", "unsub", "opt-out", "opt out", "stop"],
+      "category": "subscription",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/subscription/send",
+      "summary": "Opt a subscriber out of the application. Same endpoint as register, with action \"0\".",
+      "reference": "references/04-subscription.md",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "required": true,
+          "description": "The subscriber's tel:-prefixed MSISDN, a unique identifier. May be a masked value depending on the application type. Only a single value per request."
+        },
+        {
+          "name": "action",
+          "type": "enum",
+          "required": true,
+          "enum": ["0", "1"],
+          "description": "0 = user unsubscription, 1 = user subscription. Sent as a string."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request. The documented sample carries \"not registered\" alongside S1000 — success here means the request was processed, not that a change occurred."
+        },
+        {
+          "name": "subscriptionStatus",
+          "type": "string",
+          "description": "Resulting subscription state, for example UNREGISTERED. Read it to confirm the outcome."
+        }
+      ],
+      "sampleRequest": {
+        "subscriberId": "tel:8801959979376",
+        "action": "0"
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "statusCode": "S1000",
+        "statusDetail": "not registered",
+        "subscriptionStatus": "UNREGISTERED."
+      },
+      "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1317", "E1325", "E1601", "E1603"],
+      "rules": [
+        "Opting out must be as easy as opting in — offer it over MO SMS keywords (STOP, UNSUB, OFF), in a USSD menu option, and in-app.",
+        "Honour an opt-out immediately, including cancelling messages already queued or scheduled for that subscriber.",
+        "Unregistering someone who was never registered is not an error: the documented sample returns S1000 with subscriptionStatus UNREGISTERED. Treat reaching the desired state as success.",
+        "Never re-subscribe a subscriber who opted out without a fresh, separately recorded opt-in."
+      ]
+    },
+    {
+      "id": "subscription-query-base",
+      "envVar": "APPLINK_SUBSCRIPTION_QUERY_BASE_URL",
+      "name": "Base Size",
+      "aliases": ["query-base", "base-size", "basesize", "subscriber count"],
+      "category": "subscription",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/subscription/query-base",
+      "summary": "Return the number of subscribers currently registered to the application.",
+      "reference": "references/04-subscription.md",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "baseSize",
+          "type": "string",
+          "description": "Number of registered users. Arrives as a string — coerce it before arithmetic or charting."
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request."
+        }
+      ],
+      "sampleRequest": {},
+      "sampleResponse": {
+        "baseSize": "0",
+        "version": "1.0",
+        "statusCode": "S1000",
+        "statusDetail": "Success."
+      },
+      "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1601", "E1603"],
+      "rules": [
+        "This is the cheapest call on the platform — no subscriber, no charge, no side effect. Use it as the connectivity, credential and IP-whitelist smoke test.",
+        "baseSize is a string. Parse it.",
+        "It is a point-in-time count for the whole application, not a per-operator or per-segment figure.",
+        "Poll it on a schedule into your own metrics store rather than per page load, and sanity-check it before any tel:all broadcast."
+      ]
+    },
+    {
+      "id": "subscription-charging-info",
+      "envVar": "APPLINK_SUBSCRIPTION_CHARGING_INFO_URL",
+      "name": "Get Subscriber Charging Info",
+      "aliases": ["charging-info", "getsubscribercharginginfo", "subscription-status", "status"],
+      "category": "subscription",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/subscription/getSubscriberChargingInfo",
+      "summary": "Look up subscription status and last-charge details for up to ten subscribers in one request.",
+      "reference": "references/04-subscription.md",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "subscriberIds",
+          "type": "string[]",
+          "required": true,
+          "description": "MSISDNs of the subscribers to look up, as tel:-prefixed values. If the application accepts masked numbers, the masked values go here. Maximum ten per request."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version."
+        },
+        {
+          "name": "destinationResponses",
+          "type": "object[]",
+          "description": "One entry per subscriber in the request. Which fields are present depends on the subscription status — INITIAL and REG_PENDING omit the charge fields.",
+          "fields": [
+            {
+              "name": "subscriberId",
+              "type": "string",
+              "description": "MSISDN of the subscriber, masked if the application uses masked numbers."
+            },
+            {
+              "name": "subscriptionStatus",
+              "type": "string",
+              "description": "One of INITIAL, REG_PENDING, TRIAL, REGISTERED, UNREGISTERED or TEMPORARY_BLOCKED."
+            },
+            {
+              "name": "lastChargedDate",
+              "type": "string",
+              "description": "Date of the last successful charge, formatted YYYY-MM-DD hh:mm:ss. Omitted for a free application."
+            },
+            {
+              "name": "lastChargedAmount",
+              "type": "string",
+              "description": "Amount of the last successful charge with its currency code. Sent as 0.00 for a free application."
+            },
+            {
+              "name": "numberType",
+              "type": "string",
+              "description": "Whether the subscriber is prepaid or postpaid."
+            },
+            {
+              "name": "statusCode",
+              "type": "string",
+              "description": "Success or error code for this subscriber."
+            },
+            {
+              "name": "statusDetail",
+              "type": "string",
+              "description": "Human-readable outcome for this subscriber."
+            }
+          ]
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request."
+        }
+      ],
+      "sampleRequest": {
+        "subscriberIds": ["tel:8801973579363"]
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "destinationResponses": [
+          {
+            "subscriberId": "tel:8801973579363",
+            "subscriptionStatus": "REGISTERED",
+            "lastChargedDate": "2020-01-23 22:03:22",
+            "lastChargedAmount": "30.00 BDT",
+            "numberType": "postpaid",
+            "statusCode": "S1000",
+            "statusDetail": "Request was successfully processed"
+          }
+        ],
+        "statusCode": "S1000",
+        "statusDetail": "Success."
+      },
+      "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1317", "E1325", "E1601", "E1603"],
+      "rules": [
+        "This is Applink's subscription-status lookup — there is no separate getStatus endpoint. Use it for reconciliation, not as a per-request gate.",
+        "Maximum ten MSISDNs per request. Batch larger sets with your own throttle.",
+        "The published request schema names the required field subscriberId while the property it documents is subscriberIds. Send subscriberIds — the array — as the sample does.",
+        "The published sample writes the array entries with a stray space after tel:. Send tel:8801973579363 with no space.",
+        "Branch on each entry's statusCode, not only the top-level one.",
+        "REG_PENDING and INITIAL mean the subscription is not usable yet. Do not start delivering the service until the status is REGISTERED or TRIAL."
+      ]
+    },
+    {
+      "id": "otp-request",
+      "envVar": "APPLINK_OTP_REQUEST_URL",
+      "name": "Request OTP",
+      "aliases": ["otp", "request-otp", "send-otp"],
+      "category": "otp",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/otp/request",
+      "summary": "Send a one-time password to a subscriber's MSISDN so they can activate a subscription from a web or mobile app.",
+      "reference": "references/04-subscription.md",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "required": true,
+          "description": "Mobile number of the subscriber, in the format tel:8801416177301."
+        },
+        {
+          "name": "applicationHash",
+          "type": "string",
+          "required": false,
+          "description": "Hash string that determines which verification messages to send to your app."
+        },
+        {
+          "name": "applicationMetaData",
+          "type": "object",
+          "required": false,
+          "description": "Client context for the request: client (web browser or mobile app), device (iPhone 6, Galaxy S5, PC…), os (Android 6, iOS 5, Windows 10…) and appCode (the store identifier for an app, or the web link for a browser).",
+          "fields": [
+            {
+              "name": "client",
+              "type": "string",
+              "description": "Client type. Values are a web browser or a mobile app."
+            },
+            {
+              "name": "device",
+              "type": "string",
+              "description": "Type or OS of the device — iPhone 6, Galaxy S5, PC and so on."
+            },
+            {
+              "name": "os",
+              "type": "string",
+              "description": "OS or device version — Android 6, iOS 5, Windows 10 and so on."
+            },
+            {
+              "name": "appCode",
+              "type": "string",
+              "description": "Your app identifier in the store if you use an app, or the web link if you use a browser."
+            }
+          ]
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request. S1000 when the OTP challenge was sent."
+        },
+        {
+          "name": "referenceNo",
+          "type": "string",
+          "description": "Reference key that uniquely identifies the request. Keep it server-side against the user's session — it is what /otp/verify is called with."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "The status detail for the entire request."
+        }
+      ],
+      "sampleRequest": {
+        "subscriberId": "tel:8801416177301",
+        "applicationHash": "abcdefgh",
+        "applicationMetaData": {
+          "client": "MOBILEAPP",
+          "device": "Samsung S10",
+          "os": "android 8",
+          "appCode": "https://play.google.com/store/apps/details?id=example"
+        }
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "statusCode": "S1000",
+        "referenceNo": "213561321321613",
+        "statusDetail": "Success"
+      },
+      "statusCodes": ["S1000", "E1301", "E1312", "E1313", "E1603", "E1856"],
+      "rules": [
+        "Rate-limit OTP requests yourself, per number and per IP. Without it the application becomes an SMS-bombing tool aimed at arbitrary Bangladeshi numbers, at your expense.",
+        "referenceNo lives server-side, in the session. Never send it to the client, never put it in a URL, and never let the client choose it.",
+        "Never log the OTP or the referenceNo.",
+        "Call this from the backend only — the platform enforces IP whitelisting that a browser or mobile client cannot satisfy."
+      ]
+    },
+    {
+      "id": "otp-verify",
+      "envVar": "APPLINK_OTP_VERIFY_URL",
+      "name": "Verify OTP",
+      "aliases": ["verify-otp", "otp-verify", "confirm-otp"],
+      "category": "otp",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/otp/verify",
+      "summary": "Verify an OTP the subscriber typed in. On success the Applink subscription is activated and the subscriberId is returned.",
+      "reference": "references/04-subscription.md",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "referenceNo",
+          "type": "string",
+          "required": true,
+          "description": "Reference number returned by the Request OTP API. See the Request OTP response."
+        },
+        {
+          "name": "otp",
+          "type": "string",
+          "required": true,
+          "description": "The one-time password to use for MSISDN verification for this application."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "version",
+          "type": "string",
+          "description": "API version."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request. S1000 when the OTP validated."
+        },
+        {
+          "name": "subscriptionStatus",
+          "type": "string",
+          "description": "Subscription status of the user — INITIAL or REGISTERED."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "The status detail for the entire request."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "description": "The subscriber's mobile number, plain or masked depending on whether the application is set up for plain or masked number usage. Store this — it is the identity used by every later Applink call."
+        }
+      ],
+      "sampleRequest": {
+        "referenceNo": "213561321321613",
+        "otp": "123564"
+      },
+      "sampleResponse": {
+        "version": "1.0",
+        "statusCode": "S1000",
+        "subscriptionStatus": "REGISTERED",
+        "statusDetail": "Success",
+        "subscriberId": "tel:8801416177301"
+      },
+      "statusCodes": ["S1000", "E1850", "E1851", "E1855", "E1603", "E1856"],
+      "rules": [
+        "The OTP is valid for five minutes. Expire it on your side too rather than relying on the platform.",
+        "Store the returned subscriberId as the user's identity for every later Applink call. It may be masked; treat it as opaque.",
+        "E1850 (invalid OTP), E1851 (expired) and E1855 (invalid reference number) are user-facing prompts, not retries.",
+        "Cap verification attempts per referenceNo on your side and force a fresh request after that."
+      ]
+    },
+    {
+      "id": "caas-otp-generation",
+      "envVar": "APPLINK_CAAS_DEBIT_URL",
+      "name": "CaaS OTP Generation",
+      "aliases": ["debit", "charge", "direct-debit", "caas", "otp-generation"],
+      "category": "caas",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/caas/direct/debit",
+      "summary": "Start a one-time charge against a subscriber's mobile account. Applink sends an OTP to the subscriber, who must enter it before the charge completes.",
+      "reference": "references/05-caas.md",
+      "movesMoney": true,
+      "idempotencyKey": "externalTrxId",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "externalTrxId",
+          "type": "string",
+          "required": true,
+          "description": "The transaction ID generated by the application to map the request to the response. It is what support and reconciliation trace on. Only a single value per request."
+        },
+        {
+          "name": "amount",
+          "type": "string",
+          "required": true,
+          "description": "Amount to be reserved for charging, sent as a string. Only a single value per request."
+        },
+        {
+          "name": "paymentInstrumentName",
+          "type": "string",
+          "required": true,
+          "description": "The name of the payment instrument, for example Mobile Account. Only a single value per request."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "required": true,
+          "description": "The tel:-prefixed MSISDN of the subscriber to be charged. May be a masked value depending on the application type. Only a single value per request."
+        },
+        {
+          "name": "Currency",
+          "type": "string",
+          "required": true,
+          "description": "Currency unit of the amount. Only BDT is allowed. Note the capital C — this is how the parameter is published, and it differs from the lower-case currency used by Query Balance."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "timeStamp",
+          "type": "string",
+          "description": "The time the request was sent."
+        },
+        {
+          "name": "externalTrxId",
+          "type": "string",
+          "description": "Echo of the transaction ID you generated. Assert it matches what you sent."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Detailed description explaining the status of the entire request."
+        },
+        {
+          "name": "requestCorrelator",
+          "type": "string",
+          "description": "The unique identifier used internally to identify the transaction. This is the value you must pass as referenceNo to CaaS OTP Verification — persist it with the pending charge."
+        },
+        {
+          "name": "internalTrxId",
+          "type": "string",
+          "description": "The transaction ID generated by the service provider, used to track the transaction. Persist it for support."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "Status of the request. A leading P means partial, E means error and S means success. P1003 means the OTP is on its way and the charge is not complete."
+        }
+      ],
+      "sampleRequest": {
+        "externalTrxId": "256091232",
+        "amount": "5.00",
+        "paymentInstrumentName": "Mobile Account",
+        "subscriberId": "tel:8801973579363",
+        "Currency": "BDT"
+      },
+      "sampleResponse": {
+        "timeStamp": "2023-11-08T08:02:16.913Z",
+        "externalTrxId": "256091232",
+        "statusDetail": "Request successfully proceed. OTP will send to user.",
+        "requestCorrelator": "8801442233146169943053700500040",
+        "internalTrxId": "9110808020001876",
+        "statusCode": "P1003"
+      },
+      "statusCodes": ["S1000", "P1003", "E1303", "E1308", "E1313", "E1317", "E1318", "E1319", "E1326", "E1328", "E1337", "E1343", "E1601", "E1602", "E1603"],
+      "rules": [
+        "This is step one of two. Nothing is deducted until the subscriber's OTP is verified through CaaS OTP Verification.",
+        "externalTrxId is your idempotency key. Generate it, persist it with a PENDING charge row BEFORE sending, and reuse it unchanged on any resolution attempt.",
+        "Persist requestCorrelator from the response — it is the referenceNo the verification step needs, and it is not recoverable if you drop it.",
+        "P1003 is not success. It means the OTP was dispatched. The charge is settled by the charging notification callback, not by this response.",
+        "Never retry with a fresh externalTrxId. A timeout does not mean the charge did not start.",
+        "Hold amounts in a decimal type in your own code. Amount and currency come from server-side configuration, never from client input.",
+        "Only BDT is allowed, and the parameter is spelled Currency with a capital C."
+      ]
+    },
+    {
+      "id": "caas-otp-verify",
+      "envVar": "APPLINK_CAAS_OTP_VERIFY_URL",
+      "name": "CaaS OTP Verification",
+      "aliases": ["caas-verify", "confirm-charge", "charge-verify"],
+      "category": "caas",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/caas/otp/verify",
+      "summary": "Verify the OTP the subscriber entered and complete the one-time charge against their mobile account.",
+      "reference": "references/05-caas.md",
+      "movesMoney": true,
+      "idempotencyKey": "referenceNo",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "referenceNo",
+          "type": "string",
+          "required": true,
+          "description": "The value returned as requestCorrelator in the CaaS OTP Generation response. It is the reference of the transaction."
+        },
+        {
+          "name": "otp",
+          "type": "string",
+          "required": true,
+          "description": "The OTP the subscriber entered into the developer application."
+        },
+        {
+          "name": "sourceAddress",
+          "type": "string",
+          "required": true,
+          "description": "The tel:-prefixed MSISDN that requested the OTP — the subscriber being charged."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the request. The published sample for this endpoint echoes the request body rather than showing a response envelope, so read statusCode and statusDetail and treat the charging notification as the authoritative outcome."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the request."
+        }
+      ],
+      "sampleRequest": {
+        "referenceNo": "8801442233146169943053700500040",
+        "otp": "123456",
+        "sourceAddress": "tel:8801973579363"
+      },
+      "sampleResponse": {
+        "statusCode": "S1000",
+        "statusDetail": "Success."
+      },
+      "statusCodes": ["S1000", "E1303", "E1308", "E1313", "E1317", "E1326", "E1337", "E1850", "E1851", "E1855", "E1601", "E1603", "E1856"],
+      "rules": [
+        "This is the step that deducts money. Everything before it only reserved an intent.",
+        "referenceNo is the requestCorrelator from CaaS OTP Generation, not the externalTrxId you generated.",
+        "Never re-run the generation step to 'retry' a failed verification — that starts a second charge. Prompt the subscriber for the OTP again against the same referenceNo, or abandon the transaction and reconcile.",
+        "Settle the ledger row from the charging notification callback, which carries paidAmount, balanceDue and the final statusCode. Do not treat this response as the last word.",
+        "Never log the OTP or the referenceNo.",
+        "The published response sample for this endpoint repeats the request fields. Read statusCode and statusDetail, and log the whole body once in Limited Production so you know what your account actually returns."
+      ]
+    },
+    {
+      "id": "caas-query-balance",
+      "envVar": "APPLINK_CAAS_BALANCE_URL",
+      "name": "Query Balance",
+      "aliases": ["balance", "query-balance", "get-balance"],
+      "category": "caas",
+      "direction": "outbound",
+      "method": "POST",
+      "path": "/caas/get/balance",
+      "summary": "Read a subscriber's chargeable balance, account type and account status before attempting a charge.",
+      "reference": "references/05-caas.md",
+      "requiresProvisioning": "balance queries enabled on the application's CaaS configuration",
+      "parameters": [
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "The API key sent to your registered email address when the application was approved."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "required": true,
+          "description": "The MSISDN or username of the subscriber whose account balance is being queried. May be a masked value depending on the application type. Only a single value per request."
+        },
+        {
+          "name": "paymentInstrumentName",
+          "type": "enum",
+          "required": true,
+          "enum": ["MobileAccount"],
+          "description": "The name of the payment instrument. Only a single value per request."
+        },
+        {
+          "name": "accountId",
+          "type": "string",
+          "required": false,
+          "description": "The account of the payment instrument. Only a single value per request."
+        },
+        {
+          "name": "currency",
+          "type": "string",
+          "required": false,
+          "description": "Currency unit of the amount. Only BDT is allowed. Note the lower-case c, unlike the Currency parameter on CaaS OTP Generation."
+        }
+      ],
+      "responseFields": [
+        {
+          "name": "accountType",
+          "type": "string",
+          "description": "Account type of the subscriber ID, for example Pre Paid or Post Paid."
+        },
+        {
+          "name": "accountStatus",
+          "type": "string",
+          "description": "Account status of the subscriber ID."
+        },
+        {
+          "name": "chargeableBalance",
+          "type": "string",
+          "description": "Available chargeable balance of the subscriber: remaining account balance for a prepaid user, or credit limit minus outstanding bill for a postpaid user. Rounded to two decimal points and sent as a string."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "description": "The status code for the entire request."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "description": "Description of the status for the entire request."
+        }
+      ],
+      "sampleRequest": {
+        "subscriberId": "tel:8801959979376",
+        "paymentInstrumentName": "MobileAccount",
+        "currency": "BDT"
+      },
+      "sampleResponse": {
+        "accountType": "Pre Paid",
+        "accountStatus": "Active",
+        "chargeableBalance": "300.0",
+        "statusCode": "S1000",
+        "statusDetail": "Success."
+      },
+      "statusCodes": ["S1000", "E1303", "E1313", "E1317", "E1318", "E1319", "E1326", "E1328", "E1337", "E1343", "E1601", "E1602", "E1603"],
+      "rules": [
+        "This endpoint is in the published API specification but is not listed in the rendered documentation's navigation. Confirm with support that it is enabled on your application before you depend on it.",
+        "A balance check is advisory, not a reservation. The balance can change between this call and the charge — always handle E1326 on the charging path regardless of what this returned.",
+        "chargeableBalance is a string. Parse it into a decimal type, never a binary float you then compare for equality.",
+        "Leaving APPLINK_CAAS_BALANCE_URL unset is how you disable this locally on an application that does not have it."
+      ]
+    }
+  ],
+  "callbacks": [
+    {
+      "id": "sms-mo",
+      "name": "SMS Receive (MO)",
+      "aliases": ["mo", "sms-receive", "inbound-sms"],
+      "category": "sms",
+      "direction": "inbound",
+      "suggestedPath": "/api/applink/sms/receive",
+      "platformContract": "/sms/receive",
+      "configuredIn": "SMS API settings — the MO / receive URL",
+      "summary": "Fires when a subscriber sends an SMS to your shortcode with your keyword.",
+      "reference": "references/02-sms.md",
+      "dedupeKey": "requestId",
+      "fields": [
+        {
+          "name": "version",
+          "type": "string",
+          "required": true,
+          "description": "API version, numbered 1.0, 2.0 and so on."
+        },
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Your application ID. Verify it matches before doing anything with the payload."
+        },
+        {
+          "name": "sourceAddress",
+          "type": "string",
+          "required": true,
+          "description": "Address of the sender, masked if number masking is enabled on the application."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "description": "Content of the message sent by the user, including the keyword that routed it to you."
+        },
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true,
+          "description": "Uniquely identifies this request within the platform. This is the deduplication key."
+        },
+        {
+          "name": "encoding",
+          "type": "enum",
+          "required": true,
+          "enum": ["0", "240", "245"],
+          "description": "Encoding scheme used in the message. 0 = Text, 240 = Flash SMS, 245 = Binary, in which case the content is hex encoded."
+        }
+      ],
+      "samplePayload": {
+        "version": "1.0",
+        "applicationId": "APP_000029",
+        "sourceAddress": "tel:8801959979376",
+        "message": "JOIN",
+        "requestId": "22607072011552911",
+        "encoding": "0"
+      },
+      "statusCodes": [
+        "S1000", "E1303", "E1308", "E1309", "E1311", "E1312", "E1313", "E1315",
+        "E1317", "E1318", "E1319", "E1325", "E1331", "E1334", "E1335", "E1341",
+        "E1342", "E1343", "E1601", "E1603"
+      ],
+      "rules": [
+        "The message arrives with the keyword included. Trim, collapse whitespace and compare the keyword case-insensitively.",
+        "Recognise the standard opt-out words — STOP, UNSUB, OFF — and honour them by calling Subscription Unregister.",
+        "An MO SMS is not authenticated beyond the source address. Never perform a destructive or chargeable action on the strength of one.",
+        "Never echo user content back into an outbound SMS without sanitising it."
+      ]
+    },
+    {
+      "id": "sms-dlr",
+      "name": "SMS Delivery Status Report",
+      "aliases": ["dlr", "delivery-report", "sms-report"],
+      "category": "sms",
+      "direction": "inbound",
+      "suggestedPath": "/api/applink/sms/report",
+      "platformContract": "/sms/report",
+      "configuredIn": "SMS API settings — the delivery report URL",
+      "summary": "Fires when an MT SMS sent with deliveryStatusRequest \"1\" reaches a final state at the message centre.",
+      "reference": "references/02-sms.md",
+      "dedupeKey": "requestId + deliveryStatus",
+      "fields": [
+        {
+          "name": "destinationAddress",
+          "type": "string",
+          "required": true,
+          "description": "Address of the subscriber the report is about."
+        },
+        {
+          "name": "timeStamp",
+          "type": "string",
+          "required": true,
+          "description": "The timestamp sent from the SMS, documented as yyMMddHHmm — yy last two digits of the year, MM month 01-12, dd day 01-31, HH hour 00-23, mm minute 00-59. The published sample is 14 digits, so parse on length rather than assuming one form."
+        },
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true,
+          "description": "Uniquely identifies the request within the platform. Match it against the requestId returned by the original SMS Send."
+        },
+        {
+          "name": "deliveryStatus",
+          "type": "enum",
+          "required": true,
+          "enum": ["DELIVERED", "EXPIRED", "DELETED", "UNDELIVERABLE", "ACCEPTED", "UNKNOWN", "REJECTED"],
+          "description": "Final state of the message as reported by the platform to the application."
+        }
+      ],
+      "samplePayload": {
+        "destinationAddress": "tel:8801959979376",
+        "timeStamp": "20120113082110",
+        "requestId": "MSG_000111",
+        "deliveryStatus": "DELIVERED"
+      },
+      "statusCodes": [
+        "S1000", "E1303", "E1308", "E1309", "E1311", "E1312", "E1313", "E1315",
+        "E1317", "E1318", "E1319", "E1325", "E1331", "E1334", "E1335", "E1341",
+        "E1342", "E1343", "E1601", "E1603"
+      ],
+      "rules": [
+        "ACCEPTED is not DELIVERED — it means the network took the message, nothing more.",
+        "Reports arrive out of order, late, more than once, or never. Store the latest status keyed by requestId and keep the handler idempotent.",
+        "Repeated UNDELIVERABLE for one subscriber usually means a dead number. Stop messaging it rather than paying for nothing.",
+        "The underlying SMPP layer uses abbreviated spellings such as DELIVRD, UNDELIV, ACCEPTD and REJECTD. Normalise both forms on the way in."
+      ]
+    },
+    {
+      "id": "ussd-receive",
+      "name": "USSD Receive",
+      "aliases": ["ussd-mo", "ussd-inbound", "keypress"],
+      "category": "ussd",
+      "direction": "inbound",
+      "suggestedPath": "/api/applink/ussd/receive",
+      "platformContract": "/ussd/receive",
+      "configuredIn": "USSD API settings — the receive URL",
+      "summary": "Fires when a subscriber dials your USSD code or presses a key inside an open session.",
+      "reference": "references/03-ussd.md",
+      "dedupeKey": "requestId",
+      "fields": [
+        {
+          "name": "version",
+          "type": "string",
+          "required": true,
+          "description": "API version, numbered 1.0, 2.0 and so on."
+        },
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Your application ID. Verify it matches."
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true,
+          "description": "Content of the message sent by the user — the code they dialled or the key they pressed."
+        },
+        {
+          "name": "requestId",
+          "type": "string",
+          "required": true,
+          "description": "Uniquely identifies this request within the platform. This is the deduplication key."
+        },
+        {
+          "name": "sessionId",
+          "type": "string",
+          "required": true,
+          "description": "Unique number the USSD gateway assigns to the application for the duration of the session, maintained across every message in that session. Echo it on every USSD Send."
+        },
+        {
+          "name": "ussdOperation",
+          "type": "enum",
+          "required": true,
+          "enum": ["mo-init", "mo-cont", "mt-init", "mt-cont", "mt-fin"],
+          "description": "USSD operation. Inbound you will see mo-init when the subscriber starts the session and mo-cont for each message after it."
+        },
+        {
+          "name": "sourceAddress",
+          "type": "string",
+          "required": true,
+          "description": "Address of the sender, masked if number masking is enabled on the application."
+        },
+        {
+          "name": "vlrAddress",
+          "type": "string",
+          "required": false,
+          "description": "VLR (Visitor Location Register) address of the sender."
+        },
+        {
+          "name": "encoding",
+          "type": "enum",
+          "required": true,
+          "enum": ["440"],
+          "description": "Encoding scheme used in the message. 440 = plain ASCII characters."
+        }
+      ],
+      "samplePayload": {
+        "version": "1.0",
+        "applicationId": "APP_000029",
+        "message": "*141#",
+        "requestId": "1330933229901",
+        "sessionId": "1330929317043",
+        "ussdOperation": "mo-init",
+        "sourceAddress": "tel:8801959979376",
+        "vlrAddress": "tel:8801959979376",
+        "encoding": "440"
+      },
+      "statusCodes": [
+        "S1000", "E1303", "E1308", "E1309", "E1312", "E1313", "E1315", "E1317",
+        "E1318", "E1319", "E1325", "E1334", "E1341", "E1342", "E1343", "E1601", "E1603"
+      ],
+      "rules": [
+        "The body you return is an acknowledgement, not a reply. The screen the subscriber sees comes from a separate POST to /ussd/send.",
+        "Acknowledge before doing any work — USSD sessions time out in seconds.",
+        "Key session state on the platform's sessionId, with a TTL of about two minutes, in a store shared across every instance.",
+        "mo-init starts a session; mo-cont continues one. Nothing tells you the path the user took to get here except your own session state."
+      ]
+    },
+    {
+      "id": "subscription-notification",
+      "name": "Subscriber Notification",
+      "aliases": ["subscription-notify", "sub-notification", "notify"],
+      "category": "subscription",
+      "direction": "inbound",
+      "suggestedPath": "/api/applink/subscription/notify",
+      "platformContract": "/subscription/notify",
+      "configuredIn": "Subscription API settings — the notification URL",
+      "summary": "Fires when a subscription changes — including changes you did not initiate, such as a subscriber texting STOP or a recurring charge failing.",
+      "reference": "references/04-subscription.md",
+      "dedupeKey": "subscriberId + status + timeStamp",
+      "fields": [
+        {
+          "name": "timeStamp",
+          "type": "string",
+          "required": true,
+          "description": "The timestamp sent from the SMS, documented as yyMMddHHmm — yy last two digits of the year, MM month 01-12, dd day 01-31, HH hour 00-23, mm minute 00-59. The published sample is 14 digits, so parse on length."
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": true,
+          "description": "API version, numbered 1.0, 2.0 and so on."
+        },
+        {
+          "name": "applicationId",
+          "type": "string",
+          "required": true,
+          "description": "Your application ID. Verify it matches."
+        },
+        {
+          "name": "password",
+          "type": "string",
+          "required": true,
+          "description": "Your API key, sent by the platform inside the notification. Never log this field, and if you compare it, compare it in constant time."
+        },
+        {
+          "name": "subscriberId",
+          "type": "string",
+          "required": true,
+          "description": "The subscriber's tel:-prefixed MSISDN, a unique identifier. May be a masked value depending on the application type."
+        },
+        {
+          "name": "frequency",
+          "type": "enum",
+          "required": true,
+          "enum": ["daily", "weekly", "monthly", "yearly"],
+          "description": "Frequency at which notifications are sent for this subscription."
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "required": true,
+          "description": "Status of the subscription, for example UNREGISTERED or REGISTERED."
+        }
+      ],
+      "samplePayload": {
+        "timeStamp": "20120113082110",
+        "version": "1.0",
+        "applicationId": "APP_999999",
+        "password": "$APPLINK_PASSWORD",
+        "subscriberId": "tel:8801973579363",
+        "frequency": "monthly",
+        "status": "REGISTERED"
+      },
+      "statusCodes": ["S1000"],
+      "rules": [
+        "This callback is the authoritative source of subscription state. Consuming it is what lets you keep a local mirror instead of re-querying.",
+        "It carries your password in the body. Never log the raw payload, and redact that field before anything reaches a log aggregator.",
+        "A notification is not authorisation. Reconcile against your own records before unlocking a paid feature.",
+        "Deduplicate on subscriberId, status and timeStamp together — the same change can be delivered more than once."
+      ]
+    },
+    {
+      "id": "charging-notification",
+      "name": "Charging Notification",
+      "aliases": ["charge-notification", "caas-notification", "chargingnotification"],
+      "category": "caas",
+      "direction": "inbound",
+      "suggestedPath": "/api/applink/caas/charging-notification",
+      "platformContract": "/caas/chargingNotification",
+      "configuredIn": "CaaS API settings — the charging notification URL",
+      "summary": "Fires automatically when a charging transaction completes. There is nothing to call — it is the callback that settles the charge you started.",
+      "reference": "references/05-caas.md",
+      "dedupeKey": "externalTrxId + statusCode",
+      "fields": [
+        {
+          "name": "timeStamp",
+          "type": "string",
+          "required": true,
+          "description": "The time the request was sent. The published sample is formatted 15-Nov-2023 11:55, which is not the format any other Applink field uses — parse defensively."
+        },
+        {
+          "name": "TotalAmount",
+          "type": "string",
+          "required": true,
+          "description": "Amount deducted from the subscriber as the one-time charge. Note the capital T — this is how the field is published."
+        },
+        {
+          "name": "externalTrxId",
+          "type": "string",
+          "required": true,
+          "description": "The transaction ID your application generated for the charge. This is how you match the notification to your ledger row."
+        },
+        {
+          "name": "balanceDue",
+          "type": "string",
+          "required": true,
+          "description": "The amount still due, if any. Shows 0 when nothing is outstanding."
+        },
+        {
+          "name": "statusDetail",
+          "type": "string",
+          "required": true,
+          "description": "Detailed description explaining the status of the entire request."
+        },
+        {
+          "name": "currency",
+          "type": "string",
+          "required": true,
+          "description": "Currency unit of the amount. Only BDT is allowed."
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "required": true,
+          "description": "API version, numbered 1.0, 2.0 and so on."
+        },
+        {
+          "name": "internalTrxId",
+          "type": "string",
+          "required": true,
+          "description": "The unique identifier used to track the request at the developer application end."
+        },
+        {
+          "name": "paidAmount",
+          "type": "string",
+          "required": true,
+          "description": "The amount actually paid by the subscriber. Compare it against what you charged before marking the order fulfilled."
+        },
+        {
+          "name": "referenceId",
+          "type": "string",
+          "required": true,
+          "description": "The unique reference used to identify the transaction within the system."
+        },
+        {
+          "name": "statusCode",
+          "type": "string",
+          "required": true,
+          "description": "Status of the request. A leading P means partial, E means error and S means success."
+        }
+      ],
+      "samplePayload": {
+        "timeStamp": "15-Nov-2023 11:55",
+        "TotalAmount": "5.00",
+        "externalTrxId": "256091234",
+        "balanceDue": "0",
+        "statusDetail": "Request was Successfully processed, Due amount fully paid.",
+        "currency": "BDT",
+        "version": "1.0",
+        "internalTrxId": "9111511550014764",
+        "paidAmount": "5.00",
+        "referenceId": "8801422222550170004932307900016",
+        "statusCode": "S1000"
+      },
+      "statusCodes": ["S1000"],
+      "rules": [
+        "This is your reconciliation channel. Every charge your code left in an unknown state after a timeout is resolved here.",
+        "Match on externalTrxId — the key you generated and persisted before starting the charge.",
+        "Deduplicate on externalTrxId and statusCode together. A repeat notification for an already-settled transaction must not double-count revenue.",
+        "Compare paidAmount and balanceDue against your ledger before treating an order as fulfilled — a partial payment is a real outcome.",
+        "TotalAmount carries a capital T while paidAmount and balanceDue do not. Bind the field names exactly."
+      ]
+    }
+  ],
+  "statusCodeClasses": {
+    "success": {
+      "retry": false,
+      "action": "Proceed."
+    },
+    "pending": {
+      "retry": false,
+      "action": "The platform accepted the request but the outcome is not settled. Do not re-send it. Continue the flow — for a charge, collect the OTP and call CaaS OTP Verification — and settle from the charging notification."
+    },
+    "configuration": {
+      "retry": false,
+      "action": "Provisioning or credentials are wrong. Fix it in the portal — code changes will not help. Alert on these in production; the integration is down, not one request."
+    },
+    "client": {
+      "retry": false,
+      "action": "Your payload is wrong, or the user gave bad input. Fix the request or prompt the user."
+    },
+    "user-state": {
+      "retry": "after-user-action",
+      "action": "The subscriber is not eligible right now. Communicate; do not retry in a loop."
+    },
+    "transient": {
+      "retry": true,
+      "action": "Platform-side. Exponential backoff with jitter, capped attempts, then dead-letter."
+    }
+  },
+  "statusCodes": {
+    "S1000": {
+      "class": "success",
+      "description": "Process completed successfully for all the available destination numbers."
+    },
+    "P1003": {
+      "class": "pending",
+      "description": "Request successfully processed. The OTP will be sent to the subscriber.",
+      "fix": "CaaS OTP Generation succeeded and nothing has been charged yet. Persist requestCorrelator, collect the OTP from the subscriber, and call CaaS OTP Verification with it."
+    },
+    "E1301": {
+      "class": "configuration",
+      "description": "Requested ApplicationID is not allowed within the system for the operator.",
+      "fix": "The application is not enabled for this operator. Check the provisioning record in the portal."
+    },
+    "E1303": {
+      "class": "configuration",
+      "description": "The IP address this request originated from is not provisioned to send requests to the application. Use a provisioned system, or ask the administrator to provision the new IP.",
+      "fix": "Find the real egress IP by running curl -4 https://api.ipify.org on the calling server, then add it to the application's allowed host addresses in the portal."
+    },
+    "E1308": {
+      "class": "client",
+      "description": "Permanent charging error — the platform supplies the reason, for example insufficient balance.",
+      "fix": "Permanent for this attempt. Do not blind-retry; read statusDetail, tell the subscriber, and settle the ledger row from the charging notification."
+    },
+    "E1309": {
+      "class": "configuration",
+      "description": "The requested service is not allowed for this application.",
+      "fix": "That API was not provisioned for this application. A portal fix, not a code fix."
+    },
+    "E1311": {
+      "class": "configuration",
+      "description": "Mobile terminated SMS messages are not enabled. Check the NCS configuration in provisioning."
+    },
+    "E1312": {
+      "class": "client",
+      "description": "The request is invalid — typically a missing mandatory field or a malformed value.",
+      "fix": "Compare the payload against the parameter table for that endpoint. `applink validate <id> '<json>'` catches most causes."
+    },
+    "E1313": {
+      "class": "configuration",
+      "description": "Authentication failed. There is no active application with that applicationId, no active service provider, or the password in the request is invalid.",
+      "fix": "Check APPLINK_APP_ID and APPLINK_PASSWORD, and that the application is active in the portal."
+    },
+    "E1315": {
+      "class": "configuration",
+      "description": "Cannot find the requested service, or it is not active."
+    },
+    "E1317": {
+      "class": "user-state",
+      "description": "The MSISDN in the request is invalid or not allowed.",
+      "fix": "Validate the number before sending. Do not retry the same value."
+    },
+    "E1318": {
+      "class": "transient",
+      "description": "The transaction limit per second has been exceeded. Throttle requests, or ask the administrator to raise the traffic limit.",
+      "fix": "Add a client-side rate limiter. Backoff will clear it; more concurrency will not."
+    },
+    "E1319": {
+      "class": "transient",
+      "description": "The transaction limit for today has been exceeded. Try again tomorrow, or ask the administrator to raise the per-day limit.",
+      "fix": "Retrying today will not help. Queue the work and alert — this is a capacity problem, not a request problem."
+    },
+    "E1325": {
+      "class": "client",
+      "description": "The format of the address is invalid. The expected format is a tel:-prefixed MSISDN.",
+      "fix": "A missing tel: prefix, or a stray space. Normalise every address through one helper."
+    },
+    "E1326": {
+      "class": "user-state",
+      "description": "Insufficient balance.",
+      "fix": "Tell the subscriber. Retry later if they top up, never in a loop."
+    },
+    "E1328": {
+      "class": "configuration",
+      "description": "The charging operation is not allowed. Check the NCS configuration."
+    },
+    "E1331": {
+      "class": "configuration",
+      "description": "The source address is not allowed. Use one of the values configured in the alias configuration in the SLAs, or send the request without a sourceAddress so the platform uses the default sender address.",
+      "fix": "sourceAddress must be a provisioned alias, or omitted entirely."
+    },
+    "E1334": {
+      "class": "client",
+      "description": "The message could not be processed because its length is too long. The platform supplies the maximum.",
+      "fix": "Shorten or split the message. Bangla text is UCS-2, so the per-part budget is 70 characters, not 160."
+    },
+    "E1335": {
+      "class": "client",
+      "description": "The message could not be processed because the advertisement message length is too long. The platform supplies the maximum."
+    },
+    "E1337": {
+      "class": "client",
+      "description": "Duplicate request.",
+      "fix": "The platform already has a transaction with this identifier. Do NOT generate a fresh externalTrxId — that starts a second charge. Resolve the outcome of the original from the charging notification."
+    },
+    "E1341": {
+      "class": "transient",
+      "description": "The request failed. Errors occurred while sending the request for all the destinations."
+    },
+    "E1342": {
+      "class": "user-state",
+      "description": "The MSISDN is blacklisted and is not authorised to use this application.",
+      "fix": "Stop messaging this subscriber. Nothing in your code will change the outcome."
+    },
+    "E1343": {
+      "class": "user-state",
+      "description": "The MSISDN is not whitelisted. Only whitelisted numbers are allowed to send messages at this stage.",
+      "fix": "While the application is in Limited Production only numbers on the whitelist can use it. Add the test number in the portal."
+    },
+    "E1601": {
+      "class": "transient",
+      "description": "The system experienced an unexpected error."
+    },
+    "E1602": {
+      "class": "transient",
+      "description": "Message delivery failed. Retry."
+    },
+    "E1603": {
+      "class": "transient",
+      "description": "A temporary system error occurred while delivering your request."
+    },
+    "E1850": {
+      "class": "client",
+      "description": "Invalid OTP.",
+      "fix": "Prompt the subscriber to re-enter it. Cap the attempts yourself and force a fresh OTP request after that."
+    },
+    "E1851": {
+      "class": "client",
+      "description": "The OTP request has expired.",
+      "fix": "An Applink OTP is valid for five minutes. Request a new one."
+    },
+    "E1855": {
+      "class": "client",
+      "description": "Invalid reference number.",
+      "fix": "referenceNo must be the value returned by the matching request — referenceNo from Request OTP, or requestCorrelator from CaaS OTP Generation. It is not the externalTrxId you generated."
+    },
+    "E1856": {
+      "class": "client",
+      "description": "Invalid request.",
+      "fix": "Seen on the OTP endpoints. Check every mandatory field is present and correctly named before retrying."
+    }
+  },
+  "practices": [
+    {
+      "id": "no-hardcoded-credentials",
+      "severity": "critical",
+      "title": "Never hardcode applicationId or password",
+      "detail": "Environment variables only, through one config module, validated at startup. Not in source, not in a client bundle, not in a committed file, not in a log, not in git history. Never prefixed NEXT_PUBLIC_ / VITE_ / REACT_APP_.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "backend-only",
+      "severity": "critical",
+      "title": "Never call Applink from client-side code",
+      "detail": "Clients call your backend; your backend calls Applink. The credentials are a shared secret and the platform enforces IP whitelisting, which a mobile client cannot satisfy.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "consent",
+      "severity": "critical",
+      "title": "Explicit consent before register or charge",
+      "detail": "Record who consented, when, through which channel, and the exact wording shown. Disclose the amount, currency and frequency first. Applications are suspended over this.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "idempotent-charging",
+      "severity": "critical",
+      "title": "Charging must be idempotent",
+      "detail": "One externalTrxId per logical charge, persisted before the call and reused on any resolution attempt. Never re-roll it, and never re-run CaaS OTP Generation to retry a failed verification — either one starts a second charge against a real person.",
+      "reference": "references/05-caas.md"
+    },
+    {
+      "id": "status-code-branching",
+      "severity": "critical",
+      "title": "Branch on statusCode, not the HTTP status",
+      "detail": "Applink returns HTTP 200 for application-level failures. Checking res.ok reports failures as successes. S1000 is success; P1003 on CaaS OTP Generation means pending, not done.",
+      "reference": "references/08-status-codes.md"
+    },
+    {
+      "id": "two-step-charging",
+      "severity": "critical",
+      "title": "A charge is not complete until the OTP is verified",
+      "detail": "CaaS OTP Generation only dispatches an OTP and returns P1003. Money moves at CaaS OTP Verification, and the final outcome arrives on the charging notification callback. Code that treats the first response as a completed charge fulfils orders nobody paid for.",
+      "reference": "references/05-caas.md"
+    },
+    {
+      "id": "opaque-subscriber-id",
+      "severity": "high",
+      "title": "Treat subscriberId as opaque",
+      "detail": "With masking enabled it is not a phone number. Do not parse it, strip it, or assume a length. Store and send back exactly what you received.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "tls-verification",
+      "severity": "high",
+      "title": "Never ship disabled TLS verification",
+      "detail": "If a handshake fails on an incomplete certificate chain, supply the missing intermediate CA explicitly. Disabling verification exposes the credentials that can charge your subscribers.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "callback-ack-first",
+      "severity": "high",
+      "title": "Acknowledge callbacks before doing work",
+      "detail": "Respond S1000 immediately, then process asynchronously. USSD sessions time out in seconds; slow handlers cause retries, duplicates and dropped sessions.",
+      "reference": "references/07-callbacks.md"
+    },
+    {
+      "id": "callback-idempotency",
+      "severity": "high",
+      "title": "Every callback handler must be idempotent",
+      "detail": "All five callbacks can arrive more than once. Deduplicate on the documented key. A duplicate charging notification that double-counts revenue is a real bug.",
+      "reference": "references/07-callbacks.md"
+    },
+    {
+      "id": "callback-untrusted",
+      "severity": "high",
+      "title": "Never trust the callback body",
+      "detail": "It is unauthenticated JSON from the public internet. Validate the schema, verify applicationId, restrict by source IP, rate-limit, and never treat a callback as authorisation.",
+      "reference": "references/07-callbacks.md"
+    },
+    {
+      "id": "notification-carries-password",
+      "severity": "high",
+      "title": "The subscription notification contains your password",
+      "detail": "Applink posts the applicationId and password into the subscriber notification body. Redact that field before the payload reaches any log, trace, error report or analytics sink, and compare it in constant time if you use it.",
+      "reference": "references/07-callbacks.md"
+    },
+    {
+      "id": "static-egress-ip",
+      "severity": "high",
+      "title": "A static egress IP is a hard requirement",
+      "detail": "IP whitelisting is enforced with E1303. Serverless platforms with rotating egress need a NAT gateway or a fixed-IP proxy. Decide before choosing a host.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "broadcast-guard",
+      "severity": "high",
+      "title": "Guard tel:all",
+      "detail": "A broadcast to the entire subscriber base must never be reachable from an ordinary code path. Require an explicit, separately-authorised call and sanity-check against Base Size first.",
+      "reference": "references/02-sms.md"
+    },
+    {
+      "id": "ussd-session-store",
+      "severity": "medium",
+      "title": "USSD session state must be shared across instances",
+      "detail": "An in-process map breaks the moment you scale horizontally or deploy. Use Redis or equivalent, with a TTL of about two minutes.",
+      "reference": "references/03-ussd.md"
+    },
+    {
+      "id": "no-secret-logging",
+      "severity": "medium",
+      "title": "Never log secrets or unmasked subscriber data",
+      "detail": "Log requestId, sessionId, externalTrxId, internalTrxId and statusCode. Never the password, the OTP, referenceNo, requestCorrelator, or an unmasked subscriberId. Mask in the logger, not at each call site.",
+      "reference": "references/09-security-best-practices.md"
+    },
+    {
+      "id": "explicit-timeouts",
+      "severity": "medium",
+      "title": "Set an explicit timeout on every call",
+      "detail": "Ten to fifteen seconds. No default-infinite requests.",
+      "reference": "references/11-any-stack.md"
+    },
+    {
+      "id": "retry-discipline",
+      "severity": "medium",
+      "title": "Retry only transient codes and transport errors",
+      "detail": "Exponential backoff with jitter, capped attempts, then dead-letter. Never retry a definitive E13xx, and never retry anything on the charging path with a new identifier.",
+      "reference": "references/08-status-codes.md"
+    },
+    {
+      "id": "local-subscription-mirror",
+      "severity": "medium",
+      "title": "Mirror subscription state locally",
+      "detail": "Consume the subscriber notification callback instead of calling Get Subscriber Charging Info on every request — it is capped at ten MSISDNs per call and is meant for reconciliation.",
+      "reference": "references/04-subscription.md"
+    },
+    {
+      "id": "decimal-money",
+      "severity": "medium",
+      "title": "Use a decimal type for money",
+      "detail": "Never a binary float. Amount and currency come from server-side configuration or a server-side price lookup, never from client input. Only BDT is accepted.",
+      "reference": "references/05-caas.md"
+    }
+  ]
+}

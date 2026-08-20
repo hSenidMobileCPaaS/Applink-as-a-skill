@@ -1,0 +1,21 @@
+name: applink
+version: 1.0.0
+description: Applink telco integration for AI agents — always-on context, bundled skills, and slash commands.
+license: Proprietary — see LICENSE
+author: hSenid Mobile Solutions
+provides_skills:
+  - applink
+  - applink-scaffold
+  - applink-review
+  - applink-callbacks
+  - applink-debug
+  - applink-golive
+  - applink-help
+provides_commands:
+  - applink
+  - applink-scaffold
+  - applink-review
+  - applink-callbacks
+  - applink-debug
+  - applink-golive
+  - applink-help

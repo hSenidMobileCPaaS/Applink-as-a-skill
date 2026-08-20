@@ -1,0 +1,43 @@
+{
+  "name": "applink",
+  "version": "1.0.0",
+  "description": "Build correct Applink integrations — SMS, USSD, Subscription, OTP and CaaS charging on hSenid Mobile's Bangladesh telco platform.",
+  "author": {
+    "name": "hSenid Mobile Solutions",
+    "url": "https://www.hsenidmobile.com"
+  },
+  "homepage": "https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill",
+  "repository": "https://github.com/hSenidMobileCPaaS/Applink-as-a-Skill",
+  "license": "UNLICENSED",
+  "keywords": [
+    "applink",
+    "telco",
+    "sms",
+    "ussd",
+    "caas",
+    "otp",
+    "bangladesh"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Applink",
+    "shortDescription": "Applink telco integration",
+    "longDescription": "Exact request/response contracts for every Applink service, the two-step OTP charging flow, callback handler patterns, the full status-code table, credential hygiene and a go-live checklist.",
+    "category": "Integrations",
+    "capabilities": [
+      "Instructions",
+      "Skills",
+      "Commands"
+    ],
+    "websiteURL": "https://dev.applink.com.bd",
+    "defaultPrompt": [
+      "Add Applink SMS and subscription to this app.",
+      "Why is this Applink call returning E1303?",
+      "Review my Applink charging flow before go-live."
+    ],
+    "brandColor": "#F16724",
+    "logo": "./assets/applink-logo.png",
+    "developerName": "hSenid Mobile Solutions",
+    "composerIcon": "./assets/applink-logo.png"
+  }
+}

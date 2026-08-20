@@ -1,0 +1,6 @@
+{
+  "name": "applink",
+  "version": "1.0.0",
+  "description": "Build correct Applink integrations — SMS, USSD, Subscription, OTP and CaaS charging on hSenid Mobile's Bangladesh telco platform.",
+  "contextFileName": "AGENTS.md"
+}
