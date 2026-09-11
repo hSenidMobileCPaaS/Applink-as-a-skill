@@ -108,7 +108,7 @@ Applink does not publish a separate public sandbox host. Practical approach:
 
 | Stage | Target | How |
 |---|---|---|
-| Local development | Your own mock | Run a local mock that speaks the same JSON contract; point the service URLs at it |
+| Local development | `scripts/mock-applink.mjs` | Answers every endpoint from the contract and checks every body you send; point the service URLs at it |
 | Integration test | Real platform, Limited Production | Real credentials, whitelisted numbers only |
 | Production | Real platform, Production | Same code, different env values |
 
@@ -134,7 +134,8 @@ refuse to call it locally rather than send a request that fails `E1309` at the p
 Pointing one of them at a mock is the whole local-development switch:
 
 ```bash
-APPLINK_SMS_SEND_URL=http://localhost:4010/sms/send
+node scripts/mock-applink.mjs                         # in one terminal
+APPLINK_SMS_SEND_URL=http://127.0.0.1:8089/sms/send   # in the app's environment
 ```
 
 Never branch on an environment name (`NODE_ENV`, `APP_ENV`, `ASPNETCORE_ENVIRONMENT`, a Spring

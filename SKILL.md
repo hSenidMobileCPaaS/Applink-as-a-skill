@@ -120,6 +120,15 @@ things kept current. Write the code in the project's own conventions, from the c
 curl reference for the call → `validate` the payload your code builds → `response` for what
 comes back and how to handle it → `code`/`diagnose` when something fails.
 
+**Prove it before it touches the platform, whatever the language.** Run
+`node scripts/mock-applink.mjs` and point the project's `APPLINK_*_URL` variables at it
+(`http://127.0.0.1:8089/<service-path>`). It validates every body the code sends and answers
+like Applink; prefix the path with `/fail/` for a failure body and `/variant/` for a
+minimal-and-unexpected one, and the code must handle both. Zero `BAD` lines, and the right
+behaviour on all three, is the bar — the six shipped templates are held to it in CI. The
+serializer defaults that most often break it, per language, are in
+[references/11-any-stack.md](references/11-any-stack.md#serialising-the-request-and-parsing-the-response-per-stack).
+
 ### Getting the body right the first time
 
 The mistakes that turn a correct-looking call into `E1312`, `E1855` or a silently ignored field:
@@ -136,7 +145,10 @@ The mistakes that turn a correct-looking call into `E1312`, `E1855` or a silentl
 - **Omit an optional field you have no value for** — never send it as `null`, `""`, `{}` or `[]`
   (PHP's `json_encode([])` is `[]`, an array where an object belongs).
 - **Build the body as a map of strings and let the JSON library serialise it.** Never assemble
-  JSON by string concatenation.
+  JSON by string concatenation. Check the library's defaults: Jackson and System.Text.Json
+  write `null`s, System.Text.Json's web defaults turn a `Currency` property into `currency`,
+  kotlinx.serialization silently drops properties left at their default, Go writes a nil map
+  as `null` and an untagged field under its Go name.
 
 ### Reading the response
 
@@ -147,7 +159,7 @@ The mistakes that turn a correct-looking call into `E1312`, `E1855` or a silentl
   be absent.
 - Every response value is a string, numbers included — parse `baseSize` to an integer and money
   to a decimal type at the boundary. Read every field except `statusCode` with a default, and
-  ignore unknown fields.
+  ignore unknown fields (Jackson and kotlinx.serialization reject them unless told not to).
 - `subscriptionStatus` carries a trailing dot in the samples (`"UNREGISTERED."`): compare by
   prefix. `destinationResponses` can partially fail under a top-level `S1000`: check each entry.
 
@@ -334,8 +346,10 @@ Read the one that matches the task. Do not guess parameter names — they are al
 
 Templates in [templates/](templates/README.md) are working reference implementations of the
 same integration — config, client, callback handlers and session store — in **TypeScript/Node,
-Python, Java, Go, PHP and C#**, plus a shared `.env.example`. Scripts in [scripts/](scripts/)
-are curl smoke tests, so they exercise a handler written in any language.
+Python, Java, Go, PHP and C#**, plus a shared `.env.example`. Each is built and run against the
+validating mock in CI ([tests/conformance/](tests/conformance/run.mjs)). Scripts in
+[scripts/](scripts/) — the mock and the curl smoke tests — work with an integration written in
+any language.
 
 ---
 

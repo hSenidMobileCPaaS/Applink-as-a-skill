@@ -19,6 +19,45 @@ jobs:
       - name: Catalog and tooling tests
         run: node --test tests/*.test.js
 
+  # Build every language template exactly as shipped, call every wrapper against
+  # the validating mock, and fail on any body that does not match the contract or
+  # any response — sample, variant or failure — that the template misreads.
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: curl
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Jackson for the Java template
+        run: |
+          dir="$RUNNER_TEMP/jackson"
+          mkdir -p "$dir"
+          for artifact in databind core annotations; do
+            curl -fsSL -o "$dir/jackson-$artifact.jar" \
+              "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-$artifact/2.17.2/jackson-$artifact-2.17.2.jar"
+          done
+          echo "APPLINK_CONFORMANCE_JAVA_CP=$dir/jackson-databind.jar:$dir/jackson-core.jar:$dir/jackson-annotations.jar" >> "$GITHUB_ENV"
+      - name: Every template, every endpoint, three response scenarios
+        run: node tests/conformance/run.mjs --require-all
+
   consistency:
     runs-on: ubuntu-latest
     steps:

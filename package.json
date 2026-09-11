@@ -47,6 +47,8 @@
   "scripts": {
     "applink": "node tools/applink.mjs",
     "curl": "node tools/applink.mjs curl",
+    "mock": "node scripts/mock-applink.mjs",
+    "conformance": "node tests/conformance/run.mjs",
     "test": "node --test tests/*.test.js",
     "sync": "node scripts/sync-rules.mjs && node scripts/build-curl-reference.mjs",
     "check": "node scripts/sync-rules.mjs --check && node scripts/build-curl-reference.mjs --check && npm test"

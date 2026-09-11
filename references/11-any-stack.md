@@ -213,6 +213,30 @@ The parts that genuinely differ between stacks, and the answer for each.
 | TLS chain fix | `https.Agent({ ca })` | `ssl.create_default_context(cafile=…)` | `KeyStore` / `SSLContext`, or `keytool -importcert` | `x509.CertPool` + `tls.Config.RootCAs` | `CURLOPT_CAINFO` | `SocketsHttpHandler` + custom root store |
 | Never do this | `rejectUnauthorized: false`, `NODE_TLS_REJECT_UNAUTHORIZED=0` | `verify=False` | trust-all `TrustManager` | `InsecureSkipVerify: true` | `CURLOPT_SSL_VERIFYPEER=0` | callback returning `true` unconditionally |
 
+### Serialising the request and parsing the response, per stack
+
+The wire rules are the same everywhere: every request value a string, only that endpoint's
+fields, optional fields omitted, exact field names — and on the way back, only `statusCode`
+guaranteed, numbers arriving as strings, unknown fields ignored. What differs is how each JSON
+library breaks those rules by default. These are the defaults that turn a correct-looking
+client into `E1312`, `E1855` or a parser crash:
+
+| Stack | Request: what goes wrong by default | Fix | Response: what goes wrong by default | Fix |
+|---|---|---|---|---|
+| JavaScript / TypeScript | `null` is serialised (only `undefined` is dropped); values read from forms or `Number()` go out as numbers | Build the object with only the fields you have, as strings | A typed model makes fields look present on a failure body | Every field but `statusCode` optional; `Number.parseInt(String(x), 10)` for `baseSize` |
+| Python (`json`, pydantic) | `None` becomes `null`; `Decimal` raises `TypeError`, so people reach for `float` | Drop `None` keys; `f"{amount:.2f}"` on a `Decimal`; pydantic `model_dump(exclude_none=True, by_alias=True)` and `Field(alias="Currency")` | A pydantic field without a default raises on a failure body | `Optional[...] = None` for all but `statusCode`; extra fields are ignored by default |
+| Java (Jackson) | POJO `null`s are written; a field named `currency` is written as `currency`; `Map.of` throws on a `null` value; `BigDecimal` is written as a number | `@JsonInclude(Include.NON_NULL)`, `@JsonProperty("Currency")`, a `LinkedHashMap`, `String` amounts | `FAIL_ON_UNKNOWN_PROPERTIES` is **on** by default — one new platform field breaks every call | `@JsonIgnoreProperties(ignoreUnknown = true)`; `@JsonProperty("TotalAmount")` on the notification |
+| Kotlin (kotlinx.serialization) | `null`s are written unless `explicitNulls = false`; properties left at their default value — `val version = "1.0"` — are **not written at all** unless `encodeDefaults = true` | `Json { explicitNulls = false; encodeDefaults = true }`, `@SerialName("Currency")` | Unknown keys throw by default; a non-null property with no default throws when missing | `ignoreUnknownKeys = true`; nullable properties with defaults |
+| Go (`encoding/json`) | A nil map, slice or pointer becomes `null`; an untagged `Amount` field is written as `"Amount"` | Tag every field (`json:"amount"`, `json:"Currency"`) and add `omitempty` to optional ones; `string` for money | A number decoded into `any` becomes `float64` | Decode into `string` fields, or accept both types as `templates/go` does for `baseSize` |
+| PHP | `json_encode([])` is `[]` — an array where an object belongs; ints and floats stay numbers (`5.00` is written `5.0`) | Omit empty optional fields; cast every value to `string` | `json_decode` without `true` gives objects, and reading a missing key raises a warning | `json_decode($raw, true)` and `$data['x'] ?? default` |
+| C# (`System.Text.Json`) | `PostAsJsonAsync` uses web defaults, which **camel-case POCO properties** — `Currency` is sent as `currency`; `null`s are written; `decimal` is a number | `[JsonPropertyName("Currency")]` (dictionary keys are sent verbatim, which is why `templates/csharp` uses one), `JsonIgnoreCondition.WhenWritingNull`, `string` amounts | `GetString()` throws on a number; `required` members throw on a failure body | Check `ValueKind`; nullable members |
+| Ruby | `nil` becomes `null`; `BigDecimal#to_s` is scientific (`"0.5e1"`) | `hash.compact`; `amount.to_s("F")`, padded to two decimals | Missing keys are silently `nil` — fine — but `Integer(nil)` raises | `Integer(data.fetch("baseSize", "0"))` |
+| Rust (serde) | `Option::None` becomes `null`; `rename_all = "camelCase"` never produces `Currency` | `#[serde(skip_serializing_if = "Option::is_none")]`, `#[serde(rename = "Currency")]`, `String` amounts | A missing non-`Option` field fails the whole parse | `Option<String>` or `#[serde(default)]`; unknown fields are ignored unless `deny_unknown_fields` |
+| Dart | `jsonEncode` writes `null`s | `@JsonSerializable(includeIfNull: false)`, `@JsonKey(name: 'Currency')` | `as String` throws on a missing field | `as String?` with a default |
+
+Whatever the stack, prove it rather than trust it — see
+[Proving the bodies in any language](#proving-the-bodies-in-any-language).
+
 **Client-side prefixes to never use on an Applink variable**, since every framework has one:
 `NEXT_PUBLIC_`, `VITE_`, `REACT_APP_`, `PUBLIC_` (SvelteKit), `EXPO_PUBLIC_`,
 `NG_` build-time replacements, `@Value` injected into a browser-served config endpoint. They
@@ -233,6 +257,44 @@ all publish the password to the browser.
 
 ---
 
+## Proving the bodies in any language
+
+[`scripts/mock-applink.mjs`](../scripts/mock-applink.mjs) is a local stand-in for Applink that
+checks every request body against the contract — JSON types, field names, required fields,
+fields that belong to another endpoint — and answers the way the platform does. It does not
+care what language sent the request, so it is the same proof for a Rails app as for a Spring
+service.
+
+```bash
+node scripts/mock-applink.mjs                      # http://127.0.0.1:8089, one line per request
+
+export APPLINK_SUBSCRIPTION_QUERY_BASE_URL=http://127.0.0.1:8089/subscription/query-base
+export APPLINK_CAAS_DEBIT_URL=http://127.0.0.1:8089/caas/direct/debit
+# … one per service, then run your wrappers or your test suite
+```
+
+Each request is logged `OK`, or `BAD` with the reason — and a bad body gets the `E1312` the
+platform would send, so your error path runs too. A first path segment picks the response,
+which is how you test the reading side:
+
+| Base URL | Response | Your code must |
+|---|---|---|
+| `http://127.0.0.1:8089` | The endpoint's published sample | Parse it: `P1003` and the exact 31-digit `requestCorrelator` on a charge, `subscriptionStatus` by prefix, `baseSize` as an integer |
+| `…:8089/fail` (or `/fail-E1326`) | `statusCode` and `statusDetail` only | Raise its typed error with that code — not crash on the missing fields |
+| `…:8089/variant` | Only the fields the next step needs, numeric strings as bare numbers, one unknown field | Carry on exactly as with the sample |
+| `…:8089/timeout` | Nothing for 20 seconds | Give up at its own timeout — and on the charging path, not retry |
+
+`GET http://127.0.0.1:8089/__report` returns every request with its verdict, for a test to
+assert on. The mock listens on loopback only and makes no outbound calls.
+
+The six shipped templates are held to exactly this in CI:
+[`tests/conformance/run.mjs`](../tests/conformance/run.mjs) builds each one as written, calls
+every wrapper under the sample, variant and failure responses, and fails on any body that does
+not validate or any response it misreads. A port to a new language is done when it would pass
+the same run.
+
+---
+
 ## Acceptance checklist for a port
 
 A port in a language with no template is done when all of these hold. Check them against the
@@ -247,8 +309,8 @@ code, not against intent.
 4. Success is decided by `statusCode == "S1000"`, never by the HTTP status.
    Every request body is built from a map of strings by the JSON library: no numeric, boolean
    or `null` values, no optional field sent empty, and exactly the parameters the curl
-   reference lists for that endpoint. `node tools/applink.mjs validate <id> '<body>'` passes
-   on a logged body from each wrapper.
+   reference lists for that endpoint. Every wrapper, pointed at `scripts/mock-applink.mjs`,
+   produces zero `BAD` lines — and reads the `/fail` and `/variant` responses correctly.
 5. `P1003` is handled as pending: the ledger row stays open, `requestCorrelator` is persisted,
    and nothing downstream treats it as a completed charge.
 6. Every outbound call has an explicit timeout.
@@ -266,7 +328,8 @@ code, not against intent.
     subscriber address — including the `password` field the subscriber notification carries.
 13. TLS verification is on, with the intermediate CA supplied if the handshake needs it.
 
-Verify 1–8 by reading the code; verify 9–11 with
+Verify 4 against [the mock](#proving-the-bodies-in-any-language), the rest of 1–8 by reading
+the code; verify 9–11 with
 [scripts/test-callbacks.sh](../scripts/test-callbacks.sh), which is plain curl and works
 against a handler in any language. Verify the whole outbound path with
 [scripts/smoke-test.sh](../scripts/smoke-test.sh) (or `smoke-test.ps1`).

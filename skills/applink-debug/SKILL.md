@@ -49,9 +49,12 @@ And remember `P1003` is a *pending* code, not a failure and not a success.
 
 1. **Is it every call or one call?** Every call points at `E1303`/`E1313` — configuration.
    One call points at that service's provisioning or your payload.
-2. **Is the payload even valid?** Log the body exactly as serialised and run
-   `node tools/applink.mjs validate <id> '<json>'` on it — types and field names included.
-   Then `node tools/applink.mjs response <id> '<body>'` on what came back.
+2. **Is the payload even valid?** Point the failing call at `node scripts/mock-applink.mjs`
+   — it prints the exact body the code sent and every fault in it — or log the body as
+   serialised and run `node tools/applink.mjs validate <id> '<json>'` on it. Then
+   `node tools/applink.mjs response <id> '<body>'` on what came back. A body that is right in
+   the source but wrong on the wire is a serializer default; see the per-stack table in
+   `references/11-any-stack.md`.
 3. **Take the code out of it.** Run the endpoint by hand from
    `references/13-curl-reference.md` (or `node tools/applink.mjs curl <id> key=value …`) **from
    the same server**. A curl that works proves the payload, the credentials, the provisioning

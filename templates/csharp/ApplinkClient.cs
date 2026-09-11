@@ -180,6 +180,9 @@ public sealed class ApplinkClient
             ["password"] = _options.Password,
         };
 
+        // A dictionary on purpose: PostAsJsonAsync uses the web defaults, which camel-case POCO
+        // property names — a `Currency` property would go out as "currency". Dictionary keys
+        // are written verbatim, exactly as the contract spells them.
         using var response = await _http
             .PostAsJsonAsync(url, payload, cancellationToken)
             .ConfigureAwait(false);

@@ -14,6 +14,7 @@
  * SERVER-SIDE ONLY.
  */
 
+import http from "node:http";
 import https from "node:https";
 import { randomUUID } from "node:crypto";
 import { config, requireEndpoint } from "./applink-config";
@@ -73,14 +74,20 @@ const CONFIGURATION = new Set([
 const PENDING = new Set(["P1003"]);
 
 export class ApplinkError extends Error {
-  constructor(
-    readonly statusCode: string,
-    readonly statusDetail: string,
-    readonly service: string,
-    readonly raw?: unknown
-  ) {
+  // Plain fields rather than constructor parameter properties, so the file runs
+  // under Node's built-in type stripping as well as under tsc.
+  readonly statusCode: string;
+  readonly statusDetail: string;
+  readonly service: string;
+  readonly raw?: unknown;
+
+  constructor(statusCode: string, statusDetail: string, service: string, raw?: unknown) {
     super(`[${statusCode}] ${statusDetail} (${service})`);
     this.name = "ApplinkError";
+    this.statusCode = statusCode;
+    this.statusDetail = statusDetail;
+    this.service = service;
+    this.raw = raw;
   }
   get retryable() { return TRANSIENT.has(this.statusCode); }
   get isConfiguration() { return CONFIGURATION.has(this.statusCode); }
@@ -170,16 +177,24 @@ async function post<T extends ApplinkBaseResponse>(
   throw new ApplinkError(data.statusCode, data.statusDetail, service, data);
 }
 
+/** Plain HTTP is allowed to a local mock only — never to a host your credentials could leak to. */
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 function request<T>(url: string, body: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
-    const req = https.request(
+    const plain = parsed.protocol === "http:";
+    if (plain && !LOOPBACK.has(parsed.hostname)) {
+      reject(new Error(`[applink] ${url} is not HTTPS. Plain HTTP is only allowed to a local mock.`));
+      return;
+    }
+    const req = (plain ? http : https).request(
       {
         hostname: parsed.hostname,
-        port: parsed.port || 443,
+        port: parsed.port || (plain ? 80 : 443),
         path: parsed.pathname + parsed.search,
         method: "POST",
-        agent,
+        agent: plain ? undefined : agent,
         timeout: TIMEOUT_MS,
         headers: {
           "Content-Type": "application/json;charset=utf-8",

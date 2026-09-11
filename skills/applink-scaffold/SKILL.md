@@ -91,18 +91,23 @@ Half the integration is inbound, and for charging it is where the outcome lives.
 ## 6. Verify
 
 ```bash
+node scripts/mock-applink.mjs    # then point APPLINK_*_URL at http://127.0.0.1:8089/<path>
 node tools/applink.mjs validate <id> '<payload you generated>'
 node tools/applink.mjs response <id> '<response you got back>'
-./scripts/smoke-test.sh          # or .\scripts\smoke-test.ps1
+./scripts/smoke-test.sh          # or .\scripts\smoke-test.ps1 — against the real platform
 ```
 
-Both scripts are plain curl, so they verify a handler in any language. For a port into a stack
-with no template, finish with the acceptance checklist in `references/11-any-stack.md`.
+Run every wrapper against the mock before anything goes near the platform. It checks each body
+the code sends against the contract and answers like Applink; repeat with the
+`/fail/` and `/variant/` path prefixes and confirm the code raises the typed error on the first
+and carries on normally on the second. Zero `BAD` lines on all three is done. Before writing the
+client, read the row for the project's stack in the serializer table in
+`references/11-any-stack.md` — library defaults (nulls written, names re-cased, unknown fields
+rejected) cause most wrong bodies.
 
-No provisioned application yet? Everything above still works except the live calls. If — and
-only if — the developer asks for one, build a local mock server that answers every endpoint
-from the catalog's sample responses and can return `E1303` / `E1313` / `E1326` / `P1003` / a
-timeout on demand; point the `APPLINK_*_URL` variables at it. Do not create one unprompted.
+The mock needs no Applink account, so this is also how to build and test the whole
+integration before provisioning completes. For a port into a stack with no template, finish
+with the acceptance checklist in `references/11-any-stack.md`.
 
 Match the host project's stack and conventions. The templates are a specification, not a
 framework to impose.

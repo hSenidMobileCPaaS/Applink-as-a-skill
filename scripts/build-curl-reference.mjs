@@ -470,6 +470,8 @@ Python, Java, Go, PHP and C# — worked examples to read for shape, not output t
 | Machine-readable form of this page | [\`catalog/applink-api.json\`](../catalog/applink-api.json) |
 | Build a request with your own values | \`node tools/applink.mjs curl <id> key=value …\` |
 | Check a payload before sending it | \`node tools/applink.mjs validate <id> '<json>'\` |
+| Check a response you received | \`node tools/applink.mjs response <id> '<json>'\` |
+| Prove your code's bodies and response handling, in any language | [\`scripts/mock-applink.mjs\`](../scripts/mock-applink.mjs) — see [11-any-stack.md](11-any-stack.md#proving-the-bodies-in-any-language) |
 | Decode a status code you received | \`node tools/applink.mjs code <statusCode>\` |
 | Smoke-test the outbound path | [\`scripts/smoke-test.sh\`](../scripts/smoke-test.sh) (or \`smoke-test.ps1\`) |
 | Test all five callback handlers | [\`scripts/test-callbacks.sh\`](../scripts/test-callbacks.sh) |

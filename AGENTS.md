@@ -181,7 +181,11 @@ write bespoke HTTP calls per endpoint, in any language.
 - Send exactly that endpoint's parameters: `version` is on SMS Send and USSD Send only; names are
   case-sensitive (`Currency` on the charge, `currency` on the balance query).
 - Omit optional fields you have no value for — never `null`, `""`, `{}` or `[]`.
-- Build a map of strings and let the JSON library serialise it; never concatenate JSON.
+- Build a map of strings and let the JSON library serialise it; never concatenate JSON. Mind
+  its defaults: Jackson and System.Text.Json write `null`s, System.Text.Json's web defaults
+  camel-case a `Currency` property, kotlinx.serialization drops default-valued properties, Go
+  writes nil maps as `null`. Per-stack fixes:
+  [references/11-any-stack.md](references/11-any-stack.md#serialising-the-request-and-parsing-the-response-per-stack).
 
 **The response:**
 
@@ -190,8 +194,15 @@ write bespoke HTTP calls per endpoint, in any language.
   persist and what comes next.
 - On any other code, rely on `statusCode` and `statusDetail` only; other fields may be absent.
 - Every value arrives as a string (`baseSize`, `chargeableBalance`): parse at the boundary,
-  read fields with defaults, ignore unknown fields, compare `subscriptionStatus` by prefix, and
-  check each `destinationResponses` entry.
+  read fields with defaults, ignore unknown fields (Jackson and kotlinx.serialization reject
+  them by default), compare `subscriptionStatus` by prefix, and check each
+  `destinationResponses` entry.
+
+**Prove both, in any language:** run `node scripts/mock-applink.mjs`, point the `APPLINK_*_URL`
+variables at `http://127.0.0.1:8089/<service-path>`, and exercise every wrapper. It validates
+every body and answers like Applink; `/fail/…` and `/variant/…` prefixes serve a failure body
+and a minimal body with an unknown field, which the code must also handle. Zero `BAD` lines is
+the bar — the six shipped templates meet it in CI.
 
 **Addressing** — always `tel:`-prefixed, no spaces:
 

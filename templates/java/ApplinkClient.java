@@ -80,6 +80,8 @@ public final class ApplinkClient {
   /* ── Errors ─────────────────────────────────────────────────────────────── */
 
   public static final class ApplinkException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
     private final String statusCode;
     private final String statusDetail;
     private final String service;

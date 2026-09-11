@@ -517,6 +517,19 @@ test("every template formats a charge amount to two decimal places", () => {
   }
 });
 
+test("every language template has a conformance driver", () => {
+  const languages = readdirSync(join(repoRoot, "templates"), { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+  const drivers = readdirSync(join(repoRoot, "tests", "conformance"), { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+  assert.deepEqual(languages.filter((l) => !drivers.includes(l)), [], "a template language with no conformance driver is unverified");
+  const runner = read("tests/conformance/run.mjs");
+  for (const l of languages) assert.match(runner, new RegExp(`^  ${l}\\(\\) \\{`, "m"), `run.mjs does not run ${l}`);
+  assert.match(read(".github/workflows/ci.yml"), /tests\/conformance\/run\.mjs --require-all/);
+});
+
 test("templates document only parameters the catalog publishes", () => {
   assert.doesNotMatch(read("templates/php/ApplinkClient.php"), /chargingAmount/);
 });

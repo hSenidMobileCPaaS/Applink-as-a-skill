@@ -188,7 +188,8 @@ final class ApplinkClient
 
         $raw = curl_exec($handle);
         $error = curl_error($handle);
-        curl_close($handle);
+        // No curl_close(): the handle is freed when it goes out of scope, and the
+        // call is deprecated from PHP 8.5 — its notice would land in the output.
 
         if ($raw === false) {
             throw new RuntimeException("[applink] {$service}: transport failure: {$error}");

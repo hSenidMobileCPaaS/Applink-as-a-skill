@@ -270,15 +270,14 @@ operation — those are what Applink support traces with. Never log the password
 | What | How |
 |---|---|
 | Callback handlers | `./scripts/test-callbacks.sh http://localhost:3000` — valid, malformed, wrong-app, missing-field, oversized and duplicate payloads. Plain curl, so it works against any language |
-| Outbound payloads | `node tools/applink.mjs validate <service> '<json>'` before you ever send one |
+| Outbound payloads and response handling | `node scripts/mock-applink.mjs`, with the `APPLINK_*_URL` variables pointed at it — every body your code sends is checked against the contract, in any language. See [11-any-stack](11-any-stack.md#proving-the-bodies-in-any-language) |
 | Credentials + network | `./scripts/smoke-test.sh` from the server that will make the calls |
-| Failure paths | Force `E1313` (wrong password), `E1303` (call from an unlisted IP), `E1326` (charge above balance), `E1850` (wrong OTP), `E1851` (expired OTP) and a timeout. Handling code that has never run is not handling code |
+| Failure paths | Against the mock: `/fail/…` (or `/fail-E1326/…`, `/fail-E1850/…`) for failure bodies, `/variant/…` for minimal ones with an unknown field, `/timeout/…` for a hang. Against the platform: `E1313` (wrong password) and `E1303` (call from an unlisted IP). Handling code that has never run is not handling code |
 
-**No account yet?** Everything above still works except the live calls. If you want the whole
-integration exercised end to end before provisioning, ask the agent for a local mock server —
-it can generate one that answers every endpoint from the catalog's sample responses and returns
-chosen error codes on demand. It is built on request, not shipped by default, because a mock
-that drifts from the contract is worse than no mock.
+**No account yet?** Everything above except the smoke test runs against the mock, so the whole
+integration can be built and exercised before provisioning completes. The mock reads
+`catalog/applink-api.json` at runtime — the same data the curl reference is generated from — so
+it cannot drift from the contract the rest of this skill describes.
 
 ---
 

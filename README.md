@@ -318,7 +318,25 @@ APPLINK_PASSWORD=replace-me
 
 An unset endpoint is meaningful: the client refuses the call locally, so you get a clear error
 naming the missing variable instead of `E1309` from the platform after a round trip. Pointing
-one at a mock is the whole local-development switch.
+one at the shipped mock is the whole local-development switch.
+
+### Proving it in any language
+
+`node scripts/mock-applink.mjs` is a local stand-in for Applink. Point the endpoint variables at
+it and it checks every request body your code sends — types, field names, required fields,
+fields that belong to another endpoint — whatever language sent it, and answers the way the
+platform does. The `/fail/` and `/variant/` path prefixes serve a failure body and a minimal
+body with an unexpected field, so the response handling gets proven too.
+
+```text
+OK  subscription-register        sample
+BAD caas-otp-generation          sample
+      ✗ "amount" must be a JSON string such as "5.00", got number 5. Applink takes every value as a string …
+```
+
+The six templates are held to it in CI: `tests/conformance/run.mjs` builds each one as written,
+calls every wrapper against the sample, variant and failure responses, and fails on any body
+that does not validate or any response the template misreads.
 
 The two CaaS URLs are a pair — the templates refuse to boot with only one of them set, because
 a charge you can start but never complete leaves subscribers holding an OTP and your ledger
