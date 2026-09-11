@@ -10,7 +10,9 @@ import {
   catalog,
   diagnose,
   findEntry,
+  interpretResponse,
   lookupStatusCode,
+  parseCliValues,
   repoRoot,
   search,
   toCurl,
@@ -378,13 +380,257 @@ test("built payloads never contain a literal credential", () => {
 test("curl output is a single runnable POST with a JSON body", () => {
   const s = findEntry("subscription-query-base");
   const curl = toCurl(s, buildPayload(s, {}));
-  assert.match(curl, /^curl -sS -X POST 'https:\/\/api\.applink\.com\.bd\/subscription\/query-base'/);
-  assert.match(curl, /Content-Type: application\/json/);
+  assert.match(curl, /^curl -sS -X POST "\$APPLINK_SUBSCRIPTION_QUERY_BASE_URL"/);
+  assert.match(curl, /Content-Type: application\/json;charset=utf-8/);
   assert.match(curl, /--max-time \d+/);
   // The heredoc is unquoted on purpose: the credential variables must expand,
   // so the command runs as printed without a secret ever being written down.
-  assert.match(curl, /--data @- <<REQUEST\n[\s\S]*\nREQUEST$/);
+  assert.match(curl, /-d @- <<REQUEST\n[\s\S]*\nREQUEST$/);
   assert.match(curl, /"applicationId": "\$APPLINK_APP_ID"/);
+});
+
+/* ── Wire types ──────────────────────────────────────────────────────────── */
+
+/**
+ * The bug that made `applink curl` hand out broken bodies: every key=value was
+ * run through JSON.parse, so amounts, actions and versions became numbers and a
+ * 31-digit requestCorrelator became a float in scientific notation.
+ */
+test("key=value arguments keep every scalar as the string Applink expects", () => {
+  const verify = findEntry("caas-otp-verify");
+  const { values, errors } = parseCliValues(verify, [
+    "referenceNo=8801442233146169943053700500040",
+    "otp=012345",
+  ]);
+  assert.deepEqual(errors, []);
+  assert.equal(values.referenceNo, "8801442233146169943053700500040");
+  assert.equal(values.otp, "012345");
+
+  const charge = parseCliValues(findEntry("caas-otp-generation"), ["amount=5.00", "externalTrxId=256091232"]);
+  assert.equal(charge.values.amount, "5.00");
+  assert.equal(charge.values.externalTrxId, "256091232");
+
+  const ussd = parseCliValues(findEntry("ussd-send"), ["version=1.0", "sessionId=1330929317043"]);
+  assert.equal(ussd.values.version, "1.0");
+  assert.equal(ussd.values.sessionId, "1330929317043");
+
+  assert.equal(parseCliValues(findEntry("subscription-register"), ["action=1"]).values.action, "1");
+});
+
+test("key=value arguments parse arrays and objects where the contract has them", () => {
+  const sms = findEntry("sms-send");
+  assert.deepEqual(
+    parseCliValues(sms, ['destinationAddresses=["tel:8801959979376"]']).values.destinationAddresses,
+    ["tel:8801959979376"]
+  );
+  assert.deepEqual(
+    parseCliValues(sms, ["destinationAddresses=tel:8801959979376,tel:8801959979377"]).values.destinationAddresses,
+    ["tel:8801959979376", "tel:8801959979377"]
+  );
+  const otp = parseCliValues(findEntry("otp-request"), ['applicationMetaData={"client":"WEBAPP"}']);
+  assert.deepEqual(otp.values.applicationMetaData, { client: "WEBAPP" });
+  assert.ok(parseCliValues(findEntry("otp-request"), ["applicationMetaData={nope"]).errors.length);
+});
+
+test("validation rejects a number wherever the contract says string", () => {
+  const cases = [
+    ["caas-otp-generation", { amount: 5 }],
+    ["caas-otp-generation", { externalTrxId: 256091232 }],
+    ["subscription-register", { action: 1 }],
+    ["sms-send", { version: 1 }],
+    ["ussd-send", { encoding: 440 }],
+    ["caas-otp-verify", { referenceNo: 8.80144223314617e30 }],
+    ["otp-verify", { otp: 123456 }],
+  ];
+  for (const [id, override] of cases) {
+    const s = findEntry(id);
+    const payload = { ...s.sampleRequest, applicationId: "APP_000001", password: "x", ...override };
+    const result = validatePayload(s, payload);
+    const field = Object.keys(override)[0];
+    assert.equal(result.valid, false, `${id}.${field} as a number must be rejected`);
+    assert.ok(result.errors.some((e) => e.includes(`"${field}" must be a JSON string`)), result.errors.join("; "));
+  }
+});
+
+test("validation rejects null, empty arrays and an array where an object belongs", () => {
+  const otp = findEntry("otp-request");
+  const base = { applicationId: "APP_000001", password: "x", subscriberId: "tel:8801416177301" };
+  assert.equal(validatePayload(otp, { ...base, applicationMetaData: null }).valid, false);
+  assert.equal(validatePayload(otp, { ...base, applicationMetaData: [] }).valid, false);
+  assert.equal(validatePayload(otp, { ...base, applicationMetaData: { client: 1 } }).valid, false);
+
+  const info = findEntry("subscription-charging-info");
+  assert.equal(validatePayload(info, { applicationId: "APP_000001", password: "x", subscriberIds: [] }).valid, false);
+});
+
+test("validation checks the shape of amount and version", () => {
+  const s = findEntry("caas-otp-generation");
+  const base = { ...s.sampleRequest, applicationId: "APP_000001", password: "x" };
+  for (const bad of ["5.001", "-5", "0", "5,00", "BDT 5", "0.00"]) {
+    assert.equal(validatePayload(s, { ...base, amount: bad }).valid, false, `amount ${bad} must be rejected`);
+  }
+  for (const good of ["5", "5.0", "5.00", "150.50"]) {
+    assert.equal(validatePayload(s, { ...base, amount: good }).valid, true, `amount ${good} must pass`);
+  }
+  const sms = findEntry("sms-send");
+  const smsBase = { applicationId: "APP_000001", password: "x", message: "hi", destinationAddresses: ["tel:8801959979376"] };
+  assert.equal(validatePayload(sms, { ...smsBase, version: "v1" }).valid, false);
+});
+
+test("validation names the right field when one from another endpoint is sent", () => {
+  const cases = [
+    ["caas-otp-generation", "currency", "Currency"],
+    ["caas-query-balance", "Currency", "currency"],
+    ["caas-otp-verify", "requestCorrelator", "referenceNo"],
+    ["caas-otp-verify", "subscriberId", "sourceAddress"],
+    ["sms-send", "destinationAddress", "destinationAddresses"],
+    ["ussd-send", "destinationAddresses", "destinationAddress"],
+    ["subscription-charging-info", "subscriberId", "subscriberIds"],
+  ];
+  for (const [id, wrong, right] of cases) {
+    const s = findEntry(id);
+    const payload = { ...s.sampleRequest, applicationId: "APP_000001", password: "x", [wrong]: "x" };
+    const result = validatePayload(s, payload);
+    assert.equal(result.valid, false, `${id}: "${wrong}" must be an error`);
+    assert.ok(
+      result.errors.some((e) => e.includes(`"${wrong}"`) && e.includes(right)),
+      `${id}: the error for "${wrong}" must name "${right}" — got ${result.errors.join("; ")}`
+    );
+  }
+});
+
+test("validation catches a case-only mistake in any field name", () => {
+  const s = findEntry("subscription-register");
+  const result = validatePayload(s, {
+    applicationId: "APP_000001",
+    password: "x",
+    SubscriberId: "tel:8801959979376",
+    action: "1",
+  });
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("case-sensitive") && e.includes('"subscriberId"')));
+});
+
+test("the charging verification step insists on a tel: sourceAddress", () => {
+  const s = findEntry("caas-otp-verify");
+  const result = validatePayload(s, { ...s.sampleRequest, applicationId: "APP_000001", password: "x", sourceAddress: "8801973579363" });
+  assert.equal(result.valid, false);
+});
+
+/* ── Responses ───────────────────────────────────────────────────────────── */
+
+test("every service says which statusCode to expect and what to do with the body", () => {
+  for (const s of catalog.services) {
+    const h = s.responseHandling;
+    assert.ok(h, `${s.id} has no responseHandling`);
+    assert.ok(h.expect?.length, `${s.id} does not say which statusCode to expect`);
+    for (const code of h.expect) {
+      assert.ok(s.statusCodes.includes(code), `${s.id} expects ${code}, which it does not publish`);
+    }
+    assert.ok(h.expect.includes(s.sampleResponse.statusCode), `${s.id}'s sample response is not an expected outcome`);
+    assert.ok(h.outcome && h.next, `${s.id} responseHandling needs an outcome and a next step`);
+    for (const f of h.expectFields || []) {
+      assert.ok(s.responseFields.some((r) => r.name === f), `${s.id} expects undocumented field ${f}`);
+    }
+  }
+  assert.deepEqual(findEntry("caas-otp-generation").responseHandling.expect[0], "P1003");
+});
+
+test("the published sample response of every service reads as its expected outcome", () => {
+  for (const s of catalog.services) {
+    const r = interpretResponse(s, s.sampleResponse);
+    assert.ok(["success", "pending"].includes(r.outcome), `${s.id} sample reads as ${r.outcome}`);
+    assert.deepEqual(r.problems, [], `${s.id}: ${r.problems.join("; ")}`);
+  }
+});
+
+test("response reading: P1003 is pending, and a missing requestCorrelator is flagged", () => {
+  const s = findEntry("caas-otp-generation");
+  assert.equal(interpretResponse(s, s.sampleResponse).outcome, "pending");
+  const { requestCorrelator, ...withoutCorrelator } = s.sampleResponse;
+  const r = interpretResponse(s, withoutCorrelator);
+  assert.ok(r.problems.some((p) => p.includes("requestCorrelator")));
+  const echo = interpretResponse(s, s.sampleResponse, { externalTrxId: "different" });
+  assert.ok(echo.problems.some((p) => p.includes("externalTrxId")));
+});
+
+test("response reading: failures, partial sends and subscription state", () => {
+  const base = findEntry("subscription-query-base");
+  const failed = interpretResponse(base, { statusCode: "E1303", statusDetail: "x" });
+  assert.equal(failed.outcome, "failure");
+  assert.equal(failed.class, "configuration");
+
+  assert.equal(interpretResponse(base, { statusDetail: "no code" }).outcome, "not-applink");
+  assert.equal(interpretResponse(base, "<html>").outcome, "not-applink");
+
+  const sms = interpretResponse(findEntry("sms-send"), {
+    statusCode: "S1000",
+    requestId: "1",
+    destinationResponses: [
+      { address: "tel:8801959979376", statusCode: "S1000" },
+      { address: "tel:8801959979377", statusCode: "E1343" },
+    ],
+  });
+  assert.equal(sms.outcome, "partial");
+
+  const register = findEntry("subscription-register");
+  assert.equal(
+    interpretResponse(register, { statusCode: "S1000", subscriptionStatus: "REG_PENDING" }).outcome,
+    "processed-not-in-desired-state"
+  );
+  const unregister = findEntry("subscription-unregister");
+  assert.equal(interpretResponse(unregister, { statusCode: "S1000", subscriptionStatus: "UNREGISTERED." }).outcome, "success");
+});
+
+/* ── The generated reference ─────────────────────────────────────────────── */
+
+test("the curl reference never calls P1003 a failure, nor S1000 the only success", () => {
+  const doc = readFileSync(join(repoRoot, "references", "13-curl-reference.md"), "utf8");
+  assert.doesNotMatch(doc, /Success is `statusCode: "S1000"` — nothing else/);
+  const section = doc.slice(doc.indexOf("## CaaS OTP Generation"), doc.indexOf("## CaaS OTP Verification"));
+  assert.match(section, /expected outcome is \*\*`statusCode: "P1003"`\*\*/);
+});
+
+test("the curl reference shows every enum value as a JSON string", () => {
+  const doc = readFileSync(join(repoRoot, "references", "13-curl-reference.md"), "utf8");
+  for (const e of allEntries()) {
+    for (const p of (e.parameters || e.fields || []).filter((x) => x.enum)) {
+      const shown = `One of ${p.enum.map((v) => `\`"${v}"\``).join(", ")}.`;
+      assert.ok(doc.includes(shown), `${e.id}.${p.name} enum is not shown quoted`);
+    }
+  }
+});
+
+test("every runnable request in the curl reference is a valid body for its endpoint", () => {
+  const doc = readFileSync(join(repoRoot, "references", "13-curl-reference.md"), "utf8");
+  for (const s of catalog.services) {
+    const section = doc.indexOf(`\n## ${s.name}\n`);
+    const start = doc.indexOf(`curl -sS -X POST "$${s.envVar}"`, section);
+    const bodyStart = doc.indexOf("{", start);
+    const bodyEnd = doc.indexOf("\nREQUEST", bodyStart);
+    const body = JSON.parse(doc.slice(bodyStart, bodyEnd));
+    const result = validatePayload(s, body);
+    assert.equal(result.valid, true, `${s.id}: ${result.errors.join("; ")}`);
+    assert.deepEqual(
+      result.warnings.filter((w) => w.startsWith("Unrecognised")),
+      [],
+      `${s.id} request carries a field the endpoint does not take`
+    );
+    for (const p of s.parameters.filter((x) => !x.required && x.exampleNote)) {
+      assert.equal(body[p.name], undefined, `${s.id} example must not carry the application-specific ${p.name}`);
+    }
+  }
+});
+
+test("callback replays carry the application's own id, so a verifying handler processes them", () => {
+  const doc = readFileSync(join(repoRoot, "references", "13-curl-reference.md"), "utf8");
+  const replays = doc.slice(doc.indexOf("# Inbound callbacks"));
+  assert.doesNotMatch(replays, /<<'PAYLOAD'/, "a quoted heredoc would not expand $APPLINK_APP_ID");
+  for (const cb of catalog.callbacks.filter((c) => "applicationId" in c.samplePayload)) {
+    const section = replays.slice(replays.indexOf(`## ${cb.name}`));
+    const replay = section.slice(section.indexOf("### Replay"), section.indexOf("\nPAYLOAD"));
+    assert.match(replay, /"applicationId": "\$APPLINK_APP_ID"/, `${cb.id} replay uses a sample applicationId`);
+  }
 });
 
 /* ── Diagnosis ───────────────────────────────────────────────────────────── */

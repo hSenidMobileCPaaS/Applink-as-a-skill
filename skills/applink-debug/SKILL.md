@@ -11,6 +11,7 @@ Start with the tool, not with guesses:
 node tools/applink.mjs code E1303
 node tools/applink.mjs diagnose "callbacks never arrive"
 node tools/applink.mjs validate <id> '<payload>'
+node tools/applink.mjs response <id> '<response body>'   # what the platform actually said
 node tools/applink.mjs curl <id> [key=value ...]   # reproduce the call outside your code
 ```
 
@@ -38,6 +39,8 @@ And remember `P1003` is a *pending* code, not a failure and not a success.
 | `E1855` on every charge confirmation | The wrong identifier as `referenceNo`. It is the `requestCorrelator` from OTP generation — not your `externalTrxId`, and not the `referenceNo` from `/otp/request`. |
 | `E1337` on a charge | The platform already has that transaction. Do **not** re-roll `externalTrxId`; settle from the charging notification. |
 | `E1312` on `getSubscriberChargingInfo` | `subscriberId` sent instead of `subscriberIds`, or more than ten MSISDNs. |
+| `E1312` / `E1856` on a payload that "looks right" | A value sent as a number (`"amount": 5`, `"action": 1`), a `null` or empty optional field, or a name from another endpoint (`currency` on the charge, `version` where it is not a parameter). Log the serialised body and run `validate` on it. |
+| A 31-digit identifier "changes" between calls | It went through a number type — `requestCorrelator` becomes `8.80144223314617e+30`. Keep every identifier a string end to end. |
 | `E1325` on an address | Missing `tel:` prefix, or a stray space. On SMS specifically, the published samples use `tel:+880…` while every other API uses `tel:880…` — try the other form there. |
 | Works locally, fails deployed | The egress IP changed, or secrets are not set in the host environment. |
 | Certificate / TLS errors | Incomplete certificate chain — supply the intermediate CA, do **not** disable verification. |
@@ -46,7 +49,9 @@ And remember `P1003` is a *pending* code, not a failure and not a success.
 
 1. **Is it every call or one call?** Every call points at `E1303`/`E1313` — configuration.
    One call points at that service's provisioning or your payload.
-2. **Is the payload even valid?** `node tools/applink.mjs validate <id> '<json>'`.
+2. **Is the payload even valid?** Log the body exactly as serialised and run
+   `node tools/applink.mjs validate <id> '<json>'` on it — types and field names included.
+   Then `node tools/applink.mjs response <id> '<body>'` on what came back.
 3. **Take the code out of it.** Run the endpoint by hand from
    `references/13-curl-reference.md` (or `node tools/applink.mjs curl <id> key=value …`) **from
    the same server**. A curl that works proves the payload, the credentials, the provisioning

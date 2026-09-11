@@ -411,6 +411,7 @@ test("the CLI responds to every documented command", () => {
   assert.doesNotThrow(() => cli("code", "E1303", "--json"));
   assert.doesNotThrow(() => cli("diagnose", "callbacks never arrive", "--json"));
   assert.doesNotThrow(() => cli("curl", "subscription-query-base", "--json"));
+  assert.doesNotThrow(() => cli("response", "caas-otp-generation", "--json"));
   assert.doesNotThrow(() => cli("practices", "--json"));
   assert.doesNotThrow(() => cli("checklist", "--json"));
   assert.doesNotThrow(() => cli("platform", "--json"));
@@ -449,4 +450,73 @@ test("the CLI exits non-zero on an invalid payload", () => {
 
 test("the CLI fails clearly on an unknown service", () => {
   assert.throws(() => cli("show", "not-a-real-service"));
+});
+
+test("the CLI builds string values from key=value, exactly as typed", () => {
+  const built = JSON.parse(
+    cli("curl", "caas-otp-verify", "referenceNo=8801442233146169943053700500040", "otp=012345", "--json")
+  );
+  assert.equal(built.payload.referenceNo, "8801442233146169943053700500040");
+  assert.equal(built.payload.otp, "012345");
+  assert.ok(built.curl.includes('"referenceNo": "8801442233146169943053700500040"'));
+  assert.equal(built.validation.valid, true);
+
+  const charge = JSON.parse(cli("curl", "caas-otp-generation", "amount=5.00", "--json"));
+  assert.equal(charge.payload.amount, "5.00");
+  assert.deepEqual(charge.expectedStatusCodes, ["P1003", "S1000"]);
+});
+
+test("the CLI reads a response and reports what it means", () => {
+  const pending = JSON.parse(
+    cli("response", "caas-otp-generation", JSON.stringify(readJson("catalog/applink-api.json").services.find((s) => s.id === "caas-otp-generation").sampleResponse), "--json")
+  );
+  assert.equal(pending.outcome, "pending");
+  const failed = JSON.parse(cli("response", "subscription-query-base", '{"statusCode":"E1313","statusDetail":"x"}', "--json"));
+  assert.equal(failed.outcome, "failure");
+  assert.equal(failed.class, "configuration");
+  assert.throws(() => cli("response", "subscription-query-base", '{"statusDetail":"no code"}'));
+});
+
+/* ── Template request bodies ─────────────────────────────────────────────── */
+
+/**
+ * Regressions found by running the templates against a mock that validated
+ * every body: each of these put a wrong body on the wire.
+ */
+test("every template sends version on both SMS paths, send and broadcast", () => {
+  const cs = read("templates/csharp/ApplinkClient.cs");
+  const broadcast = cs.slice(cs.indexOf("public Task<JsonElement> BroadcastSmsAsync"), cs.indexOf("/* ── USSD"));
+  assert.match(broadcast, /\["version"\] = ApiVersion/, "C# broadcast must send the required version");
+});
+
+test("no template sends an absent applicationMetaData as null or []", () => {
+  const offenders = [];
+  const checks = {
+    "templates/go/client.go": /"applicationMetaData":\s*metaData/,
+    "templates/java/ApplinkClient.java": /Map\.of\([^)]*"applicationMetaData"/s,
+    "templates/php/ApplinkClient.php": /'applicationMetaData'\s*=>\s*\$applicationMetaData,/,
+    "templates/csharp/ApplinkClient.cs": /\["applicationMetaData"\] = applicationMetaData,\s*\n\s*\},/,
+  };
+  for (const [file, unconditional] of Object.entries(checks)) {
+    if (unconditional.test(read(file))) offenders.push(file);
+  }
+  assert.deepEqual(offenders, [], `these send applicationMetaData unconditionally: ${offenders}`);
+});
+
+test("every template formats a charge amount to two decimal places", () => {
+  const formatters = {
+    "templates/typescript/applink-client.ts": /amount: formatAmount\(input\.amount\)/,
+    "templates/python/applink_client.py": /"amount": format_amount\(amount\)/,
+    "templates/java/ApplinkClient.java": /body\.put\("amount", formatAmount\(amount\)\)/,
+    "templates/go/client.go": /"amount":\s+formatted/,
+    "templates/php/ApplinkClient.php": /'amount'\s+=> self::formatAmount\(\$amount\)/,
+    "templates/csharp/ApplinkClient.cs": /\["amount"\] = FormatAmount\(amount\)/,
+  };
+  for (const [file, re] of Object.entries(formatters)) {
+    assert.match(read(file), re, `${file} sends the amount unformatted`);
+  }
+});
+
+test("templates document only parameters the catalog publishes", () => {
+  assert.doesNotMatch(read("templates/php/ApplinkClient.php"), /chargingAmount/);
 });

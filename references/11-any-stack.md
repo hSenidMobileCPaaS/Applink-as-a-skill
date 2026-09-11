@@ -31,7 +31,7 @@ and nothing here is optional.
 | 1 | **Config module** | The only place that reads the environment. Validates at startup, fails loudly, exposes one URL per provisioned service. |
 | 2 | **Address normaliser** | The only place `tel:` is added. One function, applied at the boundary. |
 | 3 | **Transport helper** | One `post(service, url, body)`: injects credentials, sets a timeout, parses JSON, branches on `statusCode`, raises a typed error. |
-| 4 | **Status-code classifier** | Maps a code to one of four classes — configuration, client, user-state, transient — plus the benign codes per operation. |
+| 4 | **Status-code classifier** | Maps a code to one of four classes — configuration, client, user-state, transient — plus `P1003`, the one pending code, accepted by CaaS OTP Generation alone. |
 | 5 | **Service wrappers** | One thin function per API (`sendSms`, `register`, `debit`, …). No call site builds a payload itself. |
 | 6 | **Callback endpoints** | Five HTTPS POST routes that acknowledge with `S1000` first and process out of band. |
 | 7 | **State stores** | A USSD session store (shared, TTL ~2 min) and an idempotency store for `externalTrxId`. Both must survive a restart and work across instances. |
@@ -89,20 +89,36 @@ that endpoint alone and report it to support.
 The whole platform is one request shape, so it is one function:
 
 ```
-function post(service, url, body, benignCodes = []):
+function post(service, url, body, acceptedCodes = []):
     payload = { applicationId: config.appId, password: config.password } merged with body
     response = HTTP POST url
-                 header Content-Type: application/json
-                 body   json(payload)
+                 header Content-Type: application/json;charset=utf-8
+                 body   json(payload)          # the JSON library serialises; never concatenate
                  timeout 15 seconds            # never unbounded
     data = json(response.body)                 # non-JSON body is a transport error
 
-    if data.statusCode == "S1000":      return data
-    if data.statusCode in benignCodes:  return data
+    if data.statusCode == "S1000":        return data
+    if data.statusCode in acceptedCodes:  return data   # only ["P1003"], only on CaaS OTP Generation
     raise ApplinkError(data.statusCode, data.statusDetail, service, data)
 ```
 
-Three things this pseudocode says that are easy to get wrong in a port:
+**The body the wrappers hand to `post()`** is a map of strings. Every value Applink takes is a
+JSON string — `"amount": "5.00"`, `"action": "1"`, `"version": "1.0"`, `"encoding": "440"` —
+and the identifiers that come back (`requestCorrelator`, `referenceNo`, `requestId`) must stay
+strings all the way through your storage and back into the next call; a 31-digit
+`requestCorrelator` held as a number comes back as `8.80144223314617e+30`. The only non-string
+values are the arrays `destinationAddresses` / `subscriberIds` and the object
+`applicationMetaData`, both of strings. An optional field with no value is left out of the map
+— not set to `null`, `""`, `{}` or `[]`. Each endpoint's exact parameter set is in
+[13-curl-reference.md](13-curl-reference.md); `version` is on SMS Send and USSD Send only.
+
+**The data `post()` returns** is read defensively: `statusCode` decides, every other field is
+read with a default (on a failure the endpoint's own fields are usually absent), numbers arrive
+as strings and are parsed at the boundary (`baseSize` to an integer, money to a decimal type),
+and unknown fields are ignored rather than rejected. Typed response models should mark every
+field except `statusCode` optional.
+
+Three things the pseudocode says that are easy to get wrong in a port:
 
 - **The HTTP status is never consulted.** Applink returns 200 for application-level failures.
   If your HTTP library raises on non-2xx, that is fine — but success is decided by
@@ -229,6 +245,10 @@ code, not against intent.
 3. Exactly one function produces a `tel:` address; a grep for `"tel:"` finds it and nothing
    else.
 4. Success is decided by `statusCode == "S1000"`, never by the HTTP status.
+   Every request body is built from a map of strings by the JSON library: no numeric, boolean
+   or `null` values, no optional field sent empty, and exactly the parameters the curl
+   reference lists for that endpoint. `node tools/applink.mjs validate <id> '<body>'` passes
+   on a logged body from each wrapper.
 5. `P1003` is handled as pending: the ledger row stays open, `requestCorrelator` is persisted,
    and nothing downstream treats it as a completed charge.
 6. Every outbound call has an explicit timeout.

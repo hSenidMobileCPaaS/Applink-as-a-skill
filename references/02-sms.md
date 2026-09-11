@@ -151,7 +151,7 @@ shortcode with your keyword. You do not call anything.
 ### What you must respond
 
 ```json
-{ "statusCode": "S1000", "statusDetail": "Success." }
+{ "statusCode": "S1000", "statusDetail": "Success" }
 ```
 
 Respond **immediately**, before doing any real work. Full callback contract:
@@ -210,7 +210,7 @@ in rather than assuming one set.
 ### Respond
 
 ```json
-{ "statusCode": "S1000", "statusDetail": "Success." }
+{ "statusCode": "S1000", "statusDetail": "Success" }
 ```
 
 ### Using delivery reports well

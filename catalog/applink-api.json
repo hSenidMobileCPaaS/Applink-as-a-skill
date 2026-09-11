@@ -45,10 +45,29 @@
         "tel:all broadcasts to the entire subscribed base (SMS send only)."
       ]
     },
+    "wireTypes": {
+      "rule": "Every request value is a JSON string — amount, action, version, encoding, deliveryStatusRequest, otp, sessionId and every identifier included. destinationAddresses and subscriberIds are arrays of strings; applicationMetaData is an object of strings. Never send a number, a boolean or null, and omit an optional field rather than sending it empty.",
+      "examples": [
+        ["\"action\": \"1\"", "\"action\": 1"],
+        ["\"amount\": \"5.00\"", "\"amount\": 5"],
+        ["\"version\": \"1.0\"", "\"version\": 1"],
+        ["\"encoding\": \"440\"", "\"encoding\": 440"],
+        ["\"referenceNo\": \"8801442233146169943053700500040\"", "\"referenceNo\": 8.80144223314617e+30"],
+        ["\"destinationAddresses\": [\"tel:8801959979376\"]", "\"destinationAddresses\": \"tel:8801959979376\""]
+      ],
+      "version": "version is a parameter of SMS Send and USSD Send only. The subscription, OTP and CaaS requests do not carry it — follow each endpoint's parameter list, not a shared template.",
+      "names": "Field names are case-sensitive and differ between endpoints on purpose: Currency (CaaS OTP Generation) vs currency (Query Balance), destinationAddresses (SMS, array) vs destinationAddress (USSD, string), subscriberIds (charging info, array) vs subscriberId (everything else), and sourceAddress for the subscriber on CaaS OTP Verification."
+    },
     "responseEnvelope": {
       "always": ["statusCode", "statusDetail"],
       "common": ["version", "requestId"],
-      "criticalNote": "Applink returns HTTP 200 for application-level failures. Branch on statusCode, never on the HTTP status alone. S1000 is success; P1003 on CaaS OTP generation means the OTP was dispatched and the charge is not complete yet."
+      "criticalNote": "Applink returns HTTP 200 for application-level failures. Branch on statusCode, never on the HTTP status alone. S1000 is success; P1003 on CaaS OTP generation means the OTP was dispatched and the charge is not complete yet.",
+      "reading": [
+        "Decide the outcome from statusCode alone, against the outcome that endpoint is expected to return — S1000 for most, P1003 for CaaS OTP Generation.",
+        "When statusCode is anything else, rely on statusCode and statusDetail only. The endpoint's own fields (requestCorrelator, referenceNo, baseSize, destinationResponses, subscriptionStatus …) may be absent from a failure.",
+        "Every response value is a string, numbers included (baseSize, chargeableBalance, amounts). Parse at the boundary — an integer for baseSize, a decimal type for money — and accept a bare number too, so a platform-side change cannot break the parser.",
+        "Read every field other than statusCode with a default, and ignore fields you do not recognise rather than failing on them."
+      ]
     },
     "callbackAck": {
       "statusCode": "S1000",
@@ -104,12 +123,14 @@
           "name": "sourceAddress",
           "type": "string",
           "required": false,
+          "exampleNote": "must be an alias provisioned on your application — any other value is E1331",
           "description": "Address the message appears to come from — a provisioned alias such as a shortcode, or a tel:-prefixed address."
         },
         {
           "name": "deliveryStatusRequest",
           "type": "enum",
           "required": false,
+          "exampleNote": "set \"1\" only once your SMS delivery-report callback URL is configured",
           "enum": ["0", "1"],
           "description": "0 = delivery report not required, 1 = delivery report required. A delivery report arrives at your SMS report callback URL."
         },
@@ -203,6 +224,18 @@
         ],
         "statusCode": "S1000",
         "statusDetail": "Success."
+      },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The platform accepted the send. Delivery is a separate event, reported on the delivery-status callback if you asked for one.",
+        "expectFields": ["requestId", "destinationResponses"],
+        "persist": ["requestId — delivery reports and support trace on it", "destinationResponses[].messageId per recipient"],
+        "next": "Branch on every destinationResponses entry's statusCode as well: a top-level S1000 with a failed entry is a partial send, and only that recipient should be retried or dropped."
+      },
+      "wrongFields": {
+        "destinationAddress": "SMS Send takes destinationAddresses — plural, and always an array. The singular string form belongs to USSD Send.",
+        "to": "The recipients go in destinationAddresses, an array of tel: addresses.",
+        "text": "The message body goes in message."
       },
       "statusCodes": [
         "S1000", "E1303", "E1308", "E1309", "E1311", "E1312", "E1313", "E1315",
@@ -323,6 +356,18 @@
         "statusCode": "S1000",
         "statusDetail": "Success."
       },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The screen was handed to the USSD gateway for this session.",
+        "expectFields": [],
+        "persist": ["requestId — for the log line, alongside sessionId"],
+        "next": "After mt-cont, the subscriber's reply arrives on the USSD receive callback as mo-cont. After mt-fin the session is over and nothing more arrives."
+      },
+      "wrongFields": {
+        "destinationAddresses": "USSD Send takes destinationAddress — one tel: address as a string. The plural array form belongs to SMS Send.",
+        "operation": "The field is ussdOperation.",
+        "sourceAddress": "Address the screen to the subscriber with destinationAddress — the sourceAddress you received on the USSD receive callback, sent back unchanged."
+      },
       "statusCodes": [
         "S1000", "E1303", "E1308", "E1309", "E1312", "E1313", "E1315", "E1317",
         "E1318", "E1319", "E1325", "E1334", "E1341", "E1342", "E1343", "E1601", "E1603"
@@ -405,6 +450,18 @@
         "statusDetail": "Success.",
         "subscriptionStatus": "REGISTERED"
       },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The request was processed. Whether the subscriber is now opted in is in subscriptionStatus, not in statusCode.",
+        "expectFields": ["subscriptionStatus"],
+        "desiredStatus": "REGISTERED",
+        "persist": ["subscriptionStatus, with the consent record that authorised the call"],
+        "next": "Compare subscriptionStatus by prefix, trimmed and upper-cased — the published samples carry a trailing dot. REGISTERED means opted in, including on a repeat call. Any other value, such as REG_PENDING or INITIAL, is not active yet: do not deliver the service until the subscriber notification reports REGISTERED."
+      },
+      "wrongFields": {
+        "subscriberIds": "Register takes one subscriber, as subscriberId — a single tel: string, not an array.",
+        "msisdn": "The subscriber goes in subscriberId, as tel:880…."
+      },
       "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1317", "E1325", "E1601", "E1603"],
       "rules": [
         "Capture explicit consent before every register, and store who consented, when, through which channel, and the exact wording shown.",
@@ -483,6 +540,18 @@
         "statusDetail": "not registered",
         "subscriptionStatus": "UNREGISTERED."
       },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The request was processed. Whether the subscriber is now opted out is in subscriptionStatus, not in statusCode or statusDetail.",
+        "expectFields": ["subscriptionStatus"],
+        "desiredStatus": "UNREGISTERED",
+        "persist": ["subscriptionStatus, and cancel anything queued for this subscriber"],
+        "next": "Compare subscriptionStatus by prefix, trimmed and upper-cased — the published sample is \"UNREGISTERED.\" with a trailing dot. UNREGISTERED is the desired state whether or not the subscriber was registered before, so statusDetail \"not registered\" alongside it is still success."
+      },
+      "wrongFields": {
+        "subscriberIds": "Unregister takes one subscriber, as subscriberId — a single tel: string, not an array.",
+        "msisdn": "The subscriber goes in subscriberId, as tel:880…."
+      },
       "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1317", "E1325", "E1601", "E1603"],
       "rules": [
         "Opting out must be as easy as opting in — offer it over MO SMS keywords (STOP, UNSUB, OFF), in a USSD menu option, and in-app.",
@@ -544,6 +613,16 @@
         "version": "1.0",
         "statusCode": "S1000",
         "statusDetail": "Success."
+      },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "Credentials, provisioning and the egress IP all work, and baseSize is the current count of registered subscribers.",
+        "expectFields": ["baseSize"],
+        "persist": ["baseSize, parsed to an integer, into your metrics store"],
+        "next": "Parse baseSize as an integer — it arrives as a string. A base of \"0\" is a valid answer for a new application, not an error."
+      },
+      "wrongFields": {
+        "subscriberId": "Base Size takes no subscriber. The body is only applicationId and password."
       },
       "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1601", "E1603"],
       "rules": [
@@ -662,6 +741,16 @@
         "statusCode": "S1000",
         "statusDetail": "Success."
       },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The lookup ran. The answer for each subscriber is in its own destinationResponses entry.",
+        "expectFields": ["destinationResponses"],
+        "persist": ["each entry's subscriptionStatus into your local mirror, keyed by subscriberId"],
+        "next": "Iterate destinationResponses and branch on each entry's statusCode. REGISTERED or TRIAL means the subscription is usable; INITIAL and REG_PENDING are not yet, and carry no lastCharged fields — read those with a default."
+      },
+      "wrongFields": {
+        "subscriberId": "Get Subscriber Charging Info takes subscriberIds — plural, an array of up to ten tel: addresses — even for one subscriber."
+      },
       "statusCodes": ["S1000", "E1303", "E1312", "E1313", "E1317", "E1325", "E1601", "E1603"],
       "rules": [
         "This is Applink's subscription-status lookup — there is no separate getStatus endpoint. Use it for reconciliation, not as a per-request gate.",
@@ -706,12 +795,14 @@
           "name": "applicationHash",
           "type": "string",
           "required": false,
+          "exampleNote": "specific to your app",
           "description": "Hash string that determines which verification messages to send to your app."
         },
         {
           "name": "applicationMetaData",
           "type": "object",
           "required": false,
+          "exampleNote": "describes your client — send it with your own values or leave it out",
           "description": "Client context for the request: client (web browser or mobile app), device (iPhone 6, Galaxy S5, PC…), os (Android 6, iOS 5, Windows 10…) and appCode (the store identifier for an app, or the web link for a browser).",
           "fields": [
             {
@@ -774,6 +865,17 @@
         "statusCode": "S1000",
         "referenceNo": "213561321321613",
         "statusDetail": "Success"
+      },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The OTP is on its way to the subscriber's phone.",
+        "expectFields": ["referenceNo"],
+        "persist": ["referenceNo — server-side, in the user's session, for five minutes; never sent to the client"],
+        "next": "Collect the OTP the subscriber types in, then call Verify OTP with this referenceNo."
+      },
+      "wrongFields": {
+        "subscriberIds": "Request OTP takes one subscriber, as subscriberId — a single tel: string.",
+        "metaData": "The field is applicationMetaData — an object of strings (client, device, os, appCode). Omit it entirely rather than sending it empty."
       },
       "statusCodes": ["S1000", "E1301", "E1312", "E1313", "E1603", "E1856"],
       "rules": [
@@ -857,6 +959,18 @@
         "subscriptionStatus": "REGISTERED",
         "statusDetail": "Success",
         "subscriberId": "tel:8801416177301"
+      },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The OTP validated and the subscription was activated.",
+        "expectFields": ["subscriberId", "subscriptionStatus"],
+        "persist": ["subscriberId — exactly as returned; it may be masked, and it is the identity for every later Applink call", "subscriptionStatus"],
+        "next": "Store subscriberId against your user. E1850 means re-prompt against the same referenceNo; E1851 means the OTP expired and a new one must be requested."
+      },
+      "wrongFields": {
+        "requestCorrelator": "Verify OTP takes referenceNo, and it is the referenceNo from Request OTP. requestCorrelator belongs to the CaaS charging flow.",
+        "subscriberId": "Verify OTP does not take the subscriber — only referenceNo and otp. The subscriberId comes back in the response.",
+        "code": "The OTP the subscriber typed goes in otp, as a string."
       },
       "statusCodes": ["S1000", "E1850", "E1851", "E1855", "E1603", "E1856"],
       "rules": [
@@ -970,6 +1084,19 @@
         "internalTrxId": "9110808020001876",
         "statusCode": "P1003"
       },
+      "responseHandling": {
+        "expect": ["P1003", "S1000"],
+        "outcome": "P1003 is the expected answer: the OTP was sent to the subscriber and nothing has been charged. S1000 is in this endpoint's published code list too — if it ever arrives here, handle it exactly like P1003: pending, never charged.",
+        "expectFields": ["requestCorrelator", "externalTrxId", "internalTrxId"],
+        "echo": "externalTrxId",
+        "persist": ["requestCorrelator — on the PENDING ledger row; it is the referenceNo step two needs and cannot be recovered", "internalTrxId — for support"],
+        "next": "Assert the echoed externalTrxId equals the one you sent. Prompt the subscriber for the OTP, then call CaaS OTP Verification with referenceNo = requestCorrelator and sourceAddress = this subscriberId. Fulfil nothing yet."
+      },
+      "wrongFields": {
+        "currency": "CaaS OTP Generation spells it Currency — capital C. Lower-case currency is the Query Balance parameter.",
+        "referenceNo": "There is no referenceNo on this call. The platform returns requestCorrelator, which you then send as referenceNo to CaaS OTP Verification.",
+        "subscriberIds": "The subscriber goes in subscriberId — a single tel: string."
+      },
       "statusCodes": ["S1000", "P1003", "E1303", "E1308", "E1313", "E1317", "E1318", "E1319", "E1326", "E1328", "E1337", "E1343", "E1601", "E1602", "E1603"],
       "rules": [
         "This is step one of two. Nothing is deducted until the subscriber's OTP is verified through CaaS OTP Verification.",
@@ -1047,6 +1174,18 @@
         "statusCode": "S1000",
         "statusDetail": "Success."
       },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "The OTP was accepted and the charge submitted. It is not settled until the charging notification arrives.",
+        "expectFields": [],
+        "persist": ["the ledger row's state — verified, awaiting the charging notification"],
+        "next": "Fulfil only when the charging notification for this externalTrxId arrives with statusCode S1000 and a paidAmount that covers the amount. E1850 means re-prompt against the same referenceNo; never re-run CaaS OTP Generation."
+      },
+      "wrongFields": {
+        "requestCorrelator": "Send the requestCorrelator value as referenceNo — that is the field name this endpoint takes.",
+        "externalTrxId": "Not a parameter here. referenceNo is the requestCorrelator from CaaS OTP Generation, never your externalTrxId.",
+        "subscriberId": "This endpoint names the subscriber sourceAddress — the same tel: value you sent as subscriberId to CaaS OTP Generation."
+      },
       "statusCodes": ["S1000", "E1303", "E1308", "E1313", "E1317", "E1326", "E1337", "E1850", "E1851", "E1855", "E1601", "E1603", "E1856"],
       "rules": [
         "This is the step that deducts money. Everything before it only reserved an intent.",
@@ -1099,6 +1238,7 @@
           "name": "accountId",
           "type": "string",
           "required": false,
+          "exampleNote": "specific to the subscriber's account",
           "description": "The account of the payment instrument. Only a single value per request."
         },
         {
@@ -1146,6 +1286,17 @@
         "chargeableBalance": "300.0",
         "statusCode": "S1000",
         "statusDetail": "Success."
+      },
+      "responseHandling": {
+        "expect": ["S1000"],
+        "outcome": "chargeableBalance is what the subscriber can be charged right now.",
+        "expectFields": ["chargeableBalance"],
+        "persist": [],
+        "next": "Parse chargeableBalance into a decimal type — it arrives as a string. It is advisory: E1326 can still come back from the charge itself."
+      },
+      "wrongFields": {
+        "Currency": "Query Balance spells it currency — lower-case c. Capital-C Currency is the CaaS OTP Generation parameter.",
+        "subscriberIds": "The subscriber goes in subscriberId — a single tel: string."
       },
       "statusCodes": ["S1000", "E1303", "E1313", "E1317", "E1318", "E1319", "E1326", "E1328", "E1337", "E1343", "E1601", "E1602", "E1603"],
       "rules": [

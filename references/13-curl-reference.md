@@ -23,11 +23,14 @@ line of code — a working curl removes half the possible causes when the integr
 
 ```
 POST  https://api.applink.com.bd/<service-path>
-Content-Type: application/json
+Content-Type: application/json;charset=utf-8
 ```
 
 - **Credentials travel in the JSON body**, as `applicationId` and `password`. There are no
   headers, no tokens, no signatures and no OAuth on this platform.
+- **Every value is a JSON string** — amount, action, version, encoding, deliveryStatusRequest, otp, sessionId and every identifier included. destinationAddresses and subscriberIds are arrays of strings; applicationMetaData is an object of strings. Never send a number, a boolean or null, and omit an optional field rather than sending it empty.
+- **Send exactly the parameters listed for that endpoint** — no more, no fewer, spelt exactly as
+  shown. version is a parameter of SMS Send and USSD Send only. The subscription, OTP and CaaS requests do not carry it — follow each endpoint's parameter list, not a shared template.
 - **Every response is HTTP 200**, including failures. Applink returns HTTP 200 for application-level failures. Branch on statusCode, never on the HTTP status alone. S1000 is success; P1003 on CaaS OTP generation means the OTP was dispatched and the charge is not complete yet.
 - Every response carries `statusCode` and `statusDetail`; most also carry
   `version` and `requestId`.
@@ -40,6 +43,35 @@ Content-Type: application/json
 - **Charging takes two calls.** CaaS OTP Generation returns `P1003` and sends the subscriber an
   OTP; the money moves at CaaS OTP Verification, and the outcome is settled by the charging
   notification callback.
+
+### Getting the body exactly right
+
+Field names are case-sensitive and differ between endpoints on purpose: Currency (CaaS OTP Generation) vs currency (Query Balance), destinationAddresses (SMS, array) vs destinationAddress (USSD, string), subscriberIds (charging info, array) vs subscriberId (everything else), and sourceAddress for the subscriber on CaaS OTP Verification.
+
+| Send | Never |
+|---|---|
+| `"action": "1"` | `"action": 1` |
+| `"amount": "5.00"` | `"amount": 5` |
+| `"version": "1.0"` | `"version": 1` |
+| `"encoding": "440"` | `"encoding": 440` |
+| `"referenceNo": "8801442233146169943053700500040"` | `"referenceNo": 8.80144223314617e+30` |
+| `"destinationAddresses": ["tel:8801959979376"]` | `"destinationAddresses": "tel:8801959979376"` |
+
+In code, build the body as a map or object of strings and let the JSON library serialise it;
+never assemble JSON by string concatenation. `node tools/applink.mjs validate <id> '<json>'`
+catches every mistake in the table above, and names the field an endpoint expects when you send
+one that belongs to another.
+
+### Reading the response
+
+- Decide the outcome from statusCode alone, against the outcome that endpoint is expected to return — S1000 for most, P1003 for CaaS OTP Generation.
+- When statusCode is anything else, rely on statusCode and statusDetail only. The endpoint's own fields (requestCorrelator, referenceNo, baseSize, destinationResponses, subscriptionStatus …) may be absent from a failure.
+- Every response value is a string, numbers included (baseSize, chargeableBalance, amounts). Parse at the boundary — an integer for baseSize, a decimal type for money — and accept a bare number too, so a platform-side change cannot break the parser.
+- Read every field other than statusCode with a default, and ignore fields you do not recognise rather than failing on them.
+
+Each endpoint below spells out its expected `statusCode`, what to read and persist from the
+body, and the next step. `node tools/applink.mjs response <id> '<body>'` checks a real response
+against the same rules.
 
 ## Before you run anything
 
@@ -60,18 +92,29 @@ export APPLINK_OTP_VERIFY_URL='https://api.applink.com.bd/otp/verify'
 export APPLINK_CAAS_DEBIT_URL='https://api.applink.com.bd/caas/direct/debit'
 export APPLINK_CAAS_OTP_VERIFY_URL='https://api.applink.com.bd/caas/otp/verify'
 export APPLINK_CAAS_BALANCE_URL='https://api.applink.com.bd/caas/get/balance'
+
+: "${APPLINK_APP_ID:?not set}" "${APPLINK_PASSWORD:?not set}"   # fail here, not as E1313
 ```
 
 One variable per provisioned service, never one shared base URL: an application can only call
 the APIs it was provisioned for, so an endpoint you have no variable for is one you must not
 call.
 
+The requests below splice the password into JSON text. If it contains a `"` or a `\`, build
+the body with `jq` instead so it is escaped:
+
+```bash
+jq -n --arg id "$APPLINK_APP_ID" --arg pw "$APPLINK_PASSWORD" '{applicationId: $id, password: $pw}' |
+  curl -sS -X POST "$APPLINK_SUBSCRIPTION_QUERY_BASE_URL" \
+    -H 'Content-Type: application/json;charset=utf-8' --max-time 15 -d @-
+```
+
 Windows PowerShell, where `curl` is an alias for `Invoke-WebRequest` and the syntax differs:
 
 ```powershell
 $body = @{ applicationId = $env:APPLINK_APP_ID; password = $env:APPLINK_PASSWORD } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri $env:APPLINK_SUBSCRIPTION_QUERY_BASE_URL `
-  -ContentType 'application/json' -Body $body
+  -ContentType 'application/json;charset=utf-8' -Body $body
 ```
 
 Three flags in every request below, all deliberate: `-sS` prints errors but not a progress bar,
@@ -134,15 +177,15 @@ Send an MT (Mobile Terminated) SMS to one or more subscribers.
 | `message` | string | **Required** | Content of the message to send. Messages over the limit are broken up by the platform before sending. |
 | `destinationAddresses` | string[] | **Required** | Array of tel:-prefixed destination addresses. Always an array, even for one recipient. tel:all sends to the subscribed base of the application. May be a masked value depending on the application type. |
 | `sourceAddress` | string | Optional | Address the message appears to come from — a provisioned alias such as a shortcode, or a tel:-prefixed address. |
-| `deliveryStatusRequest` | enum | Optional | 0 = delivery report not required, 1 = delivery report required. A delivery report arrives at your SMS report callback URL. One of `0`, `1`. |
-| `encoding` | enum | Optional | Encoding scheme used in the message. 0 = Text, 240 = Flash SMS, 245 = Binary. Defaults to Text. With Binary the message content must be hex encoded. One of `0`, `240`, `245`. |
+| `deliveryStatusRequest` | string (enum) | Optional | 0 = delivery report not required, 1 = delivery report required. A delivery report arrives at your SMS report callback URL. One of `"0"`, `"1"`. |
+| `encoding` | string (enum) | Optional | Encoding scheme used in the message. 0 = Text, 240 = Flash SMS, 245 = Binary. Defaults to Text. With Binary the message content must be hex encoded. One of `"0"`, `"240"`, `"245"`. |
 | `binaryHeader` | string | Optional | Hex-encoded binary header, for advanced message types where the header is supplied by the application. Only meaningful with encoding 245. |
 
 ### Request
 
 ```bash
 curl -sS -X POST "$APPLINK_SMS_SEND_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -153,16 +196,25 @@ curl -sS -X POST "$APPLINK_SMS_SEND_URL" \
   "destinationAddresses": [
     "tel:8801959979376"
   ],
-  "sourceAddress": "77000",
-  "deliveryStatusRequest": "1",
   "encoding": "0"
 }
 REQUEST
 ```
 
+Optional, and left out above because the value is yours to supply:
+
+- `sourceAddress`: must be an alias provisioned on your application — any other value is E1331 — published sample `"77000"`
+- `deliveryStatusRequest`: set "1" only once your SMS delivery-report callback URL is configured — published sample `"1"`
+
+Fields that do not belong in this body:
+
+- ✗ `destinationAddress` — SMS Send takes destinationAddresses — plural, and always an array. The singular string form belongs to USSD Send.
+- ✗ `to` — The recipients go in destinationAddresses, an array of tel: addresses.
+- ✗ `text` — The message body goes in message.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -191,6 +243,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `destinationResponses` | object[] | One entry per address in the request. A multi-recipient send can partially succeed, so branch on each entry's statusCode, not only the top-level one. |
 | `statusCode` | string | The status code for the entire request. S1000 on success. |
 | `statusDetail` | string | Description of the status for the entire request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The platform accepted the send. Delivery is a separate event, reported on the delivery-status callback if you asked for one.
+2. **On `S1000`, read** `requestId`, `destinationResponses` — present on the expected outcome; read them with a default anyway.
+3. **Persist** requestId — delivery reports and support trace on it; destinationResponses[].messageId per recipient.
+4. **Then:** Branch on every destinationResponses entry's statusCode as well: a top-level S1000 with a failed entry is a partial send, and only that recipient should be retried or dropped.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -250,15 +310,15 @@ Send a USSD screen to a handset inside an open session.
 | `password` | string | **Required** | The API key sent to your registered email address when the application was approved. |
 | `message` | string | **Required** | Content of the message sent by the application — the screen text the subscriber sees. |
 | `sessionId` | string | **Required** | Unique number the USSD gateway assigns to the application for the duration of the session. It is maintained across every message in a single session — echo the one you were given, never generate your own. |
-| `ussdOperation` | enum | **Required** | USSD operation. The application assigns mt-init when it initiates a session, mt-cont for any message that follows an init, and mt-fin when the session ends on a final message. mo-init and mo-cont are assigned by the platform on inbound messages. One of `mo-init`, `mo-cont`, `mt-init`, `mt-cont`, `mt-fin`. |
+| `ussdOperation` | string (enum) | **Required** | USSD operation. The application assigns mt-init when it initiates a session, mt-cont for any message that follows an init, and mt-fin when the session ends on a final message. mo-init and mo-cont are assigned by the platform on inbound messages. One of `"mo-init"`, `"mo-cont"`, `"mt-init"`, `"mt-cont"`, `"mt-fin"`. |
 | `destinationAddress` | string | **Required** | Destination address — a tel:-prefixed telephone number, which may be a masked value depending on the application type. |
-| `encoding` | enum | Optional | Encoding scheme used in the message. 440 = plain ASCII characters. One of `440`. |
+| `encoding` | string (enum) | Optional | Encoding scheme used in the message. 440 = plain ASCII characters. One of `"440"`. |
 
 ### Request
 
 ```bash
 curl -sS -X POST "$APPLINK_USSD_SEND_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -274,9 +334,15 @@ curl -sS -X POST "$APPLINK_USSD_SEND_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `destinationAddresses` — USSD Send takes destinationAddress — one tel: address as a string. The plural array form belongs to SMS Send.
+- ✗ `operation` — The field is ussdOperation.
+- ✗ `sourceAddress` — Address the screen to the subscriber with destinationAddress — the sourceAddress you received on the USSD receive callback, sent back unchanged.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -297,6 +363,13 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `timeStamp` | string | Processed timestamp. |
 | `statusCode` | string | The status code for the entire request. S1000 on success. |
 | `statusDetail` | string | Description of the status for the entire request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The screen was handed to the USSD gateway for this session.
+2. **Persist** requestId — for the log line, alongside sessionId.
+3. **Then:** After mt-cont, the subscriber's reply arrives on the USSD receive callback as mo-cont. After mt-fin the session is over and nothing more arrives.
+4. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -350,13 +423,13 @@ Opt a subscriber in to the application. Same endpoint as unregister, with action
 | `applicationId` | string | **Required** | Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request. |
 | `password` | string | **Required** | The API key sent to your registered email address when the application was approved. |
 | `subscriberId` | string | **Required** | The subscriber's tel:-prefixed MSISDN, a unique identifier. May be a masked value depending on the application type. Only a single value per request. |
-| `action` | enum | **Required** | 0 = user unsubscription, 1 = user subscription. Sent as a string. One of `0`, `1`. |
+| `action` | string (enum) | **Required** | 0 = user unsubscription, 1 = user subscription. Sent as a string. One of `"0"`, `"1"`. |
 
 ### Request
 
 ```bash
 curl -sS -X POST "$APPLINK_SUBSCRIPTION_SEND_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -368,9 +441,14 @@ curl -sS -X POST "$APPLINK_SUBSCRIPTION_SEND_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `subscriberIds` — Register takes one subscriber, as subscriberId — a single tel: string, not an array.
+- ✗ `msisdn` — The subscriber goes in subscriberId, as tel:880….
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -389,6 +467,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `statusCode` | string | The status code for the entire request. |
 | `statusDetail` | string | Description of the status for the entire request. |
 | `subscriptionStatus` | string | Resulting subscription state, for example REGISTERED or UNREGISTERED. This — not an error code — is how you confirm the outcome, so read it on every response. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The request was processed. Whether the subscriber is now opted in is in subscriptionStatus, not in statusCode.
+2. **On `S1000`, read** `subscriptionStatus` — present on the expected outcome; read them with a default anyway.
+3. **Persist** subscriptionStatus, with the consent record that authorised the call.
+4. **Then:** Compare subscriptionStatus by prefix, trimmed and upper-cased — the published samples carry a trailing dot. REGISTERED means opted in, including on a repeat call. Any other value, such as REG_PENDING or INITIAL, is not active yet: do not deliver the service until the subscriber notification reports REGISTERED.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -432,13 +518,13 @@ Opt a subscriber out of the application. Same endpoint as register, with action 
 | `applicationId` | string | **Required** | Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request. |
 | `password` | string | **Required** | The API key sent to your registered email address when the application was approved. |
 | `subscriberId` | string | **Required** | The subscriber's tel:-prefixed MSISDN, a unique identifier. May be a masked value depending on the application type. Only a single value per request. |
-| `action` | enum | **Required** | 0 = user unsubscription, 1 = user subscription. Sent as a string. One of `0`, `1`. |
+| `action` | string (enum) | **Required** | 0 = user unsubscription, 1 = user subscription. Sent as a string. One of `"0"`, `"1"`. |
 
 ### Request
 
 ```bash
 curl -sS -X POST "$APPLINK_SUBSCRIPTION_SEND_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -450,9 +536,14 @@ curl -sS -X POST "$APPLINK_SUBSCRIPTION_SEND_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `subscriberIds` — Unregister takes one subscriber, as subscriberId — a single tel: string, not an array.
+- ✗ `msisdn` — The subscriber goes in subscriberId, as tel:880….
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -471,6 +562,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `statusCode` | string | The status code for the entire request. |
 | `statusDetail` | string | Description of the status for the entire request. The documented sample carries "not registered" alongside S1000 — success here means the request was processed, not that a change occurred. |
 | `subscriptionStatus` | string | Resulting subscription state, for example UNREGISTERED. Read it to confirm the outcome. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The request was processed. Whether the subscriber is now opted out is in subscriptionStatus, not in statusCode or statusDetail.
+2. **On `S1000`, read** `subscriptionStatus` — present on the expected outcome; read them with a default anyway.
+3. **Persist** subscriptionStatus, and cancel anything queued for this subscriber.
+4. **Then:** Compare subscriptionStatus by prefix, trimmed and upper-cased — the published sample is "UNREGISTERED." with a trailing dot. UNREGISTERED is the desired state whether or not the subscriber was registered before, so statusDetail "not registered" alongside it is still success.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -518,7 +617,7 @@ Return the number of subscribers currently registered to the application.
 
 ```bash
 curl -sS -X POST "$APPLINK_SUBSCRIPTION_QUERY_BASE_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -528,9 +627,13 @@ curl -sS -X POST "$APPLINK_SUBSCRIPTION_QUERY_BASE_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `subscriberId` — Base Size takes no subscriber. The body is only applicationId and password.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -549,6 +652,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `version` | string | API version. |
 | `statusCode` | string | The status code for the entire request. |
 | `statusDetail` | string | Description of the status for the entire request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. Credentials, provisioning and the egress IP all work, and baseSize is the current count of registered subscribers.
+2. **On `S1000`, read** `baseSize` — present on the expected outcome; read them with a default anyway.
+3. **Persist** baseSize, parsed to an integer, into your metrics store.
+4. **Then:** Parse baseSize as an integer — it arrives as a string. A base of "0" is a valid answer for a new application, not an error.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -595,7 +706,7 @@ Look up subscription status and last-charge details for up to ten subscribers in
 
 ```bash
 curl -sS -X POST "$APPLINK_SUBSCRIPTION_CHARGING_INFO_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -608,9 +719,13 @@ curl -sS -X POST "$APPLINK_SUBSCRIPTION_CHARGING_INFO_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `subscriberId` — Get Subscriber Charging Info takes subscriberIds — plural, an array of up to ten tel: addresses — even for one subscriber.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -639,6 +754,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `destinationResponses` | object[] | One entry per subscriber in the request. Which fields are present depends on the subscription status — INITIAL and REG_PENDING omit the charge fields. |
 | `statusCode` | string | The status code for the entire request. |
 | `statusDetail` | string | Description of the status for the entire request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The lookup ran. The answer for each subscriber is in its own destinationResponses entry.
+2. **On `S1000`, read** `destinationResponses` — present on the expected outcome; read them with a default anyway.
+3. **Persist** each entry's subscriptionStatus into your local mirror, keyed by subscriberId.
+4. **Then:** Iterate destinationResponses and branch on each entry's statusCode. REGISTERED or TRIAL means the subscription is usable; INITIAL and REG_PENDING are not yet, and carry no lastCharged fields — read those with a default.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -691,27 +814,30 @@ Send a one-time password to a subscriber's MSISDN so they can activate a subscri
 
 ```bash
 curl -sS -X POST "$APPLINK_OTP_REQUEST_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
   "applicationId": "$APPLINK_APP_ID",
   "password": "$APPLINK_PASSWORD",
-  "subscriberId": "tel:8801416177301",
-  "applicationHash": "abcdefgh",
-  "applicationMetaData": {
-    "client": "MOBILEAPP",
-    "device": "Samsung S10",
-    "os": "android 8",
-    "appCode": "https://play.google.com/store/apps/details?id=example"
-  }
+  "subscriberId": "tel:8801416177301"
 }
 REQUEST
 ```
 
+Optional, and left out above because the value is yours to supply:
+
+- `applicationHash`: specific to your app — published sample `"abcdefgh"`
+- `applicationMetaData`: describes your client — send it with your own values or leave it out — published sample `{"client":"MOBILEAPP","device":"Samsung S10","os":"android 8","appCode":"https://play.google.com/store/apps/details?id=example"}`
+
+Fields that do not belong in this body:
+
+- ✗ `subscriberIds` — Request OTP takes one subscriber, as subscriberId — a single tel: string.
+- ✗ `metaData` — The field is applicationMetaData — an object of strings (client, device, os, appCode). Omit it entirely rather than sending it empty.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -730,6 +856,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `statusCode` | string | The status code for the entire request. S1000 when the OTP challenge was sent. |
 | `referenceNo` | string | Reference key that uniquely identifies the request. Keep it server-side against the user's session — it is what /otp/verify is called with. |
 | `statusDetail` | string | The status detail for the entire request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The OTP is on its way to the subscriber's phone.
+2. **On `S1000`, read** `referenceNo` — present on the expected outcome; read them with a default anyway.
+3. **Persist** referenceNo — server-side, in the user's session, for five minutes; never sent to the client.
+4. **Then:** Collect the OTP the subscriber types in, then call Verify OTP with this referenceNo.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -777,7 +911,7 @@ Verify an OTP the subscriber typed in. On success the Applink subscription is ac
 
 ```bash
 curl -sS -X POST "$APPLINK_OTP_VERIFY_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -789,9 +923,15 @@ curl -sS -X POST "$APPLINK_OTP_VERIFY_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `requestCorrelator` — Verify OTP takes referenceNo, and it is the referenceNo from Request OTP. requestCorrelator belongs to the CaaS charging flow.
+- ✗ `subscriberId` — Verify OTP does not take the subscriber — only referenceNo and otp. The subscriberId comes back in the response.
+- ✗ `code` — The OTP the subscriber typed goes in otp, as a string.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -812,6 +952,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `subscriptionStatus` | string | Subscription status of the user — INITIAL or REGISTERED. |
 | `statusDetail` | string | The status detail for the entire request. |
 | `subscriberId` | string | The subscriber's mobile number, plain or masked depending on whether the application is set up for plain or masked number usage. Store this — it is the identity used by every later Applink call. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The OTP validated and the subscription was activated.
+2. **On `S1000`, read** `subscriberId`, `subscriptionStatus` — present on the expected outcome; read them with a default anyway.
+3. **Persist** subscriberId — exactly as returned; it may be masked, and it is the identity for every later Applink call; subscriptionStatus.
+4. **Then:** Store subscriberId against your user. E1850 means re-prompt against the same referenceNo; E1851 means the OTP expired and a new one must be requested.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -866,7 +1014,7 @@ Start a one-time charge against a subscriber's mobile account. Applink sends an 
 
 ```bash
 curl -sS -X POST "$APPLINK_CAAS_DEBIT_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -881,9 +1029,15 @@ curl -sS -X POST "$APPLINK_CAAS_DEBIT_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `currency` — CaaS OTP Generation spells it Currency — capital C. Lower-case currency is the Query Balance parameter.
+- ✗ `referenceNo` — There is no referenceNo on this call. The platform returns requestCorrelator, which you then send as referenceNo to CaaS OTP Verification.
+- ✗ `subscriberIds` — The subscriber goes in subscriberId — a single tel: string.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is **`statusCode: "P1003"`** — pending, not a completed operation. Treat `"S1000"` the same way if it ever arrives here.
 
 ```json
 {
@@ -906,6 +1060,14 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `requestCorrelator` | string | The unique identifier used internally to identify the transaction. This is the value you must pass as referenceNo to CaaS OTP Verification — persist it with the pending charge. |
 | `internalTrxId` | string | The transaction ID generated by the service provider, used to track the transaction. Persist it for support. |
 | `statusCode` | string | Status of the request. A leading P means partial, E means error and S means success. P1003 means the OTP is on its way and the charge is not complete. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `P1003` or `S1000`. P1003 is the expected answer: the OTP was sent to the subscriber and nothing has been charged. S1000 is in this endpoint's published code list too — if it ever arrives here, handle it exactly like P1003: pending, never charged.
+2. **On `P1003` or `S1000`, read** `requestCorrelator`, `externalTrxId`, `internalTrxId` — present on the expected outcome; read them with a default anyway.
+3. **Persist** requestCorrelator — on the PENDING ledger row; it is the referenceNo step two needs and cannot be recovered; internalTrxId — for support.
+4. **Then:** Assert the echoed externalTrxId equals the one you sent. Prompt the subscriber for the OTP, then call CaaS OTP Verification with referenceNo = requestCorrelator and sourceAddress = this subscriberId. Fulfil nothing yet.
+5. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -970,7 +1132,7 @@ Verify the OTP the subscriber entered and complete the one-time charge against t
 
 ```bash
 curl -sS -X POST "$APPLINK_CAAS_OTP_VERIFY_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -983,9 +1145,15 @@ curl -sS -X POST "$APPLINK_CAAS_OTP_VERIFY_URL" \
 REQUEST
 ```
 
+Fields that do not belong in this body:
+
+- ✗ `requestCorrelator` — Send the requestCorrelator value as referenceNo — that is the field name this endpoint takes.
+- ✗ `externalTrxId` — Not a parameter here. referenceNo is the requestCorrelator from CaaS OTP Generation, never your externalTrxId.
+- ✗ `subscriberId` — This endpoint names the subscriber sourceAddress — the same tel: value you sent as subscriberId to CaaS OTP Generation.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -1000,6 +1168,13 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 |---|---|---|
 | `statusCode` | string | The status code for the request. The published sample for this endpoint echoes the request body rather than showing a response envelope, so read statusCode and statusDetail and treat the charging notification as the authoritative outcome. |
 | `statusDetail` | string | Description of the status for the request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. The OTP was accepted and the charge submitted. It is not settled until the charging notification arrives.
+2. **Persist** the ledger row's state — verified, awaiting the charging notification.
+3. **Then:** Fulfil only when the charging notification for this externalTrxId arrives with statusCode S1000 and a paidAmount that covers the amount. E1850 means re-prompt against the same referenceNo; never re-run CaaS OTP Generation.
+4. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -1053,7 +1228,7 @@ Read a subscriber's chargeable balance, account type and account status before a
 | `applicationId` | string | **Required** | Identifies the application. Unique identifier generated when the application is provisioned. Only a single value per request. |
 | `password` | string | **Required** | The API key sent to your registered email address when the application was approved. |
 | `subscriberId` | string | **Required** | The MSISDN or username of the subscriber whose account balance is being queried. May be a masked value depending on the application type. Only a single value per request. |
-| `paymentInstrumentName` | enum | **Required** | The name of the payment instrument. Only a single value per request. One of `MobileAccount`. |
+| `paymentInstrumentName` | string (enum) | **Required** | The name of the payment instrument. Only a single value per request. One of `"MobileAccount"`. |
 | `accountId` | string | Optional | The account of the payment instrument. Only a single value per request. |
 | `currency` | string | Optional | Currency unit of the amount. Only BDT is allowed. Note the lower-case c, unlike the Currency parameter on CaaS OTP Generation. |
 
@@ -1061,7 +1236,7 @@ Read a subscriber's chargeable balance, account type and account status before a
 
 ```bash
 curl -sS -X POST "$APPLINK_CAAS_BALANCE_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {
@@ -1074,9 +1249,18 @@ curl -sS -X POST "$APPLINK_CAAS_BALANCE_URL" \
 REQUEST
 ```
 
+Optional, and left out above because the value is yours to supply:
+
+- `accountId`: specific to the subscriber's account
+
+Fields that do not belong in this body:
+
+- ✗ `Currency` — Query Balance spells it currency — lower-case c. Capital-C Currency is the CaaS OTP Generation parameter.
+- ✗ `subscriberIds` — The subscriber goes in subscriberId — a single tel: string.
+
 ### Response
 
-HTTP 200. Success is `statusCode: "S1000"` — nothing else.
+HTTP 200. The expected outcome is `statusCode: "S1000"`.
 
 ```json
 {
@@ -1097,6 +1281,13 @@ HTTP 200. Success is `statusCode: "S1000"` — nothing else.
 | `chargeableBalance` | string | Available chargeable balance of the subscriber: remaining account balance for a prepaid user, or credit limit minus outstanding bill for a postpaid user. Rounded to two decimal points and sent as a string. |
 | `statusCode` | string | The status code for the entire request. |
 | `statusDetail` | string | Description of the status for the entire request. |
+
+### Handling the response
+
+1. **Decide from `statusCode`**, never from the HTTP status. Expected: `S1000`. chargeableBalance is what the subscriber can be charged right now.
+2. **On `S1000`, read** `chargeableBalance` — present on the expected outcome; read them with a default anyway.
+3. **Then:** Parse chargeableBalance into a decimal type — it arrives as a string. It is advisory: E1326 can still come back from the charge itself.
+4. **Any other `statusCode`:** rely on `statusCode` and `statusDetail` only — the fields above may be absent — and handle it by class from the table below.
 
 ### Status codes for this endpoint
 
@@ -1152,7 +1343,7 @@ Fires when a subscriber sends an SMS to your shortcode with your keyword.
 | `sourceAddress` | string | **Always sent** | Address of the sender, masked if number masking is enabled on the application. |
 | `message` | string | **Always sent** | Content of the message sent by the user, including the keyword that routed it to you. |
 | `requestId` | string | **Always sent** | Uniquely identifies this request within the platform. This is the deduplication key. |
-| `encoding` | enum | **Always sent** | Encoding scheme used in the message. 0 = Text, 240 = Flash SMS, 245 = Binary, in which case the content is hex encoded. One of `0`, `240`, `245`. |
+| `encoding` | string (enum) | **Always sent** | Encoding scheme used in the message. 0 = Text, 240 = Flash SMS, 245 = Binary, in which case the content is hex encoded. One of `"0"`, `"240"`, `"245"`. |
 
 ### What arrives
 
@@ -1180,13 +1371,15 @@ HTTP 200, immediately, before doing any work:
 
 ### Replay it against your own handler
 
+`applicationId` comes from your environment, as the platform would send it — a handler that verifies `applicationId` ignores the sample value, and the replay would prove nothing.
+
 ```bash
 curl -sS -X POST "http://localhost:3000/api/applink/sms/receive" \
-  -H 'Content-Type: application/json' \
-  -d @- <<'PAYLOAD'
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d @- <<PAYLOAD
 {
   "version": "1.0",
-  "applicationId": "APP_000029",
+  "applicationId": "$APPLINK_APP_ID",
   "sourceAddress": "tel:8801959979376",
   "message": "JOIN",
   "requestId": "22607072011552911",
@@ -1223,7 +1416,7 @@ Fires when an MT SMS sent with deliveryStatusRequest "1" reaches a final state a
 | `destinationAddress` | string | **Always sent** | Address of the subscriber the report is about. |
 | `timeStamp` | string | **Always sent** | The timestamp sent from the SMS, documented as yyMMddHHmm — yy last two digits of the year, MM month 01-12, dd day 01-31, HH hour 00-23, mm minute 00-59. The published sample is 14 digits, so parse on length rather than assuming one form. |
 | `requestId` | string | **Always sent** | Uniquely identifies the request within the platform. Match it against the requestId returned by the original SMS Send. |
-| `deliveryStatus` | enum | **Always sent** | Final state of the message as reported by the platform to the application. One of `DELIVERED`, `EXPIRED`, `DELETED`, `UNDELIVERABLE`, `ACCEPTED`, `UNKNOWN`, `REJECTED`. |
+| `deliveryStatus` | string (enum) | **Always sent** | Final state of the message as reported by the platform to the application. One of `"DELIVERED"`, `"EXPIRED"`, `"DELETED"`, `"UNDELIVERABLE"`, `"ACCEPTED"`, `"UNKNOWN"`, `"REJECTED"`. |
 
 ### What arrives
 
@@ -1251,8 +1444,8 @@ HTTP 200, immediately, before doing any work:
 
 ```bash
 curl -sS -X POST "http://localhost:3000/api/applink/sms/report" \
-  -H 'Content-Type: application/json' \
-  -d @- <<'PAYLOAD'
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d @- <<PAYLOAD
 {
   "destinationAddress": "tel:8801959979376",
   "timeStamp": "20120113082110",
@@ -1292,10 +1485,10 @@ Fires when a subscriber dials your USSD code or presses a key inside an open ses
 | `message` | string | **Always sent** | Content of the message sent by the user — the code they dialled or the key they pressed. |
 | `requestId` | string | **Always sent** | Uniquely identifies this request within the platform. This is the deduplication key. |
 | `sessionId` | string | **Always sent** | Unique number the USSD gateway assigns to the application for the duration of the session, maintained across every message in that session. Echo it on every USSD Send. |
-| `ussdOperation` | enum | **Always sent** | USSD operation. Inbound you will see mo-init when the subscriber starts the session and mo-cont for each message after it. One of `mo-init`, `mo-cont`, `mt-init`, `mt-cont`, `mt-fin`. |
+| `ussdOperation` | string (enum) | **Always sent** | USSD operation. Inbound you will see mo-init when the subscriber starts the session and mo-cont for each message after it. One of `"mo-init"`, `"mo-cont"`, `"mt-init"`, `"mt-cont"`, `"mt-fin"`. |
 | `sourceAddress` | string | **Always sent** | Address of the sender, masked if number masking is enabled on the application. |
 | `vlrAddress` | string | Optional | VLR (Visitor Location Register) address of the sender. |
-| `encoding` | enum | **Always sent** | Encoding scheme used in the message. 440 = plain ASCII characters. One of `440`. |
+| `encoding` | string (enum) | **Always sent** | Encoding scheme used in the message. 440 = plain ASCII characters. One of `"440"`. |
 
 ### What arrives
 
@@ -1326,13 +1519,15 @@ HTTP 200, immediately, before doing any work:
 
 ### Replay it against your own handler
 
+`applicationId` comes from your environment, as the platform would send it — a handler that verifies `applicationId` ignores the sample value, and the replay would prove nothing.
+
 ```bash
 curl -sS -X POST "http://localhost:3000/api/applink/ussd/receive" \
-  -H 'Content-Type: application/json' \
-  -d @- <<'PAYLOAD'
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d @- <<PAYLOAD
 {
   "version": "1.0",
-  "applicationId": "APP_000029",
+  "applicationId": "$APPLINK_APP_ID",
   "message": "*141#",
   "requestId": "1330933229901",
   "sessionId": "1330929317043",
@@ -1374,7 +1569,7 @@ Fires when a subscription changes — including changes you did not initiate, su
 | `applicationId` | string | **Always sent** | Your application ID. Verify it matches. |
 | `password` | string | **Always sent** | Your API key, sent by the platform inside the notification. Never log this field, and if you compare it, compare it in constant time. |
 | `subscriberId` | string | **Always sent** | The subscriber's tel:-prefixed MSISDN, a unique identifier. May be a masked value depending on the application type. |
-| `frequency` | enum | **Always sent** | Frequency at which notifications are sent for this subscription. One of `daily`, `weekly`, `monthly`, `yearly`. |
+| `frequency` | string (enum) | **Always sent** | Frequency at which notifications are sent for this subscription. One of `"daily"`, `"weekly"`, `"monthly"`, `"yearly"`. |
 | `status` | string | **Always sent** | Status of the subscription, for example UNREGISTERED or REGISTERED. |
 
 ### What arrives
@@ -1404,14 +1599,16 @@ HTTP 200, immediately, before doing any work:
 
 ### Replay it against your own handler
 
+`applicationId` and `password` come from your environment, as the platform would send them — a handler that verifies `applicationId` ignores the sample value, and the replay would prove nothing.
+
 ```bash
 curl -sS -X POST "http://localhost:3000/api/applink/subscription/notify" \
-  -H 'Content-Type: application/json' \
-  -d @- <<'PAYLOAD'
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d @- <<PAYLOAD
 {
   "timeStamp": "20120113082110",
   "version": "1.0",
-  "applicationId": "APP_999999",
+  "applicationId": "$APPLINK_APP_ID",
   "password": "$APPLINK_PASSWORD",
   "subscriberId": "tel:8801973579363",
   "frequency": "monthly",
@@ -1490,8 +1687,8 @@ HTTP 200, immediately, before doing any work:
 
 ```bash
 curl -sS -X POST "http://localhost:3000/api/applink/caas/charging-notification" \
-  -H 'Content-Type: application/json' \
-  -d @- <<'PAYLOAD'
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d @- <<PAYLOAD
 {
   "timeStamp": "15-Nov-2023 11:55",
   "TotalAmount": "5.00",

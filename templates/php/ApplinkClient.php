@@ -213,7 +213,7 @@ final class ApplinkClient
      *
      * @param string|list<string>  $to
      * @param array<string, mixed> $options sourceAddress, deliveryStatusRequest,
-     *                                      encoding, chargingAmount
+     *                                      encoding, binaryHeader
      *
      * @return array<string, mixed>
      */
@@ -235,8 +235,50 @@ final class ApplinkClient
                 'message'              => $message,
                 'destinationAddresses' => array_values($recipients),
             ],
-            $options
+            self::smsOptions($options)
         ));
+    }
+
+    /**
+     * The optional SMS fields, as the strings the platform expects. PHP happily
+     * passes deliveryStatusRequest => 1 through json_encode as a number.
+     *
+     * @param array<string, mixed> $options
+     *
+     * @return array<string, string>
+     */
+    private static function smsOptions(array $options): array
+    {
+        $allowed = ['sourceAddress', 'deliveryStatusRequest', 'encoding', 'binaryHeader'];
+        $unknown = array_diff(array_keys($options), $allowed);
+        if ($unknown !== []) {
+            throw new InvalidArgumentException(
+                '[applink] Unknown SMS option(s): ' . implode(', ', $unknown)
+            );
+        }
+
+        return array_map(static fn ($value): string => (string) $value, array_filter(
+            $options,
+            static fn ($value): bool => $value !== null && $value !== ''
+        ));
+    }
+
+    /**
+     * Money crosses the wire as a string with two decimal places, as the
+     * published sample does ('5.00'). Rejects anything that is not a positive
+     * amount in whole poisha.
+     */
+    public static function formatAmount(string $amount): string
+    {
+        $trimmed = trim($amount);
+        if (!preg_match('/^(\d+)(?:\.(\d{1,2}))?$/', $trimmed, $match)
+            || preg_match('/^0+(\.0+)?$/', $trimmed)) {
+            throw new InvalidArgumentException(
+                "[applink] amount must be a positive decimal string such as \"5.00\", got \"{$amount}\""
+            );
+        }
+
+        return $match[1] . '.' . str_pad($match[2] ?? '', 2, '0');
     }
 
     /**
@@ -262,7 +304,7 @@ final class ApplinkClient
                 'message'              => $message,
                 'destinationAddresses' => ['tel:all'],
             ],
-            $options
+            self::smsOptions($options)
         ));
     }
 
@@ -400,16 +442,31 @@ final class ApplinkClient
      * Rate-limit per number AND per IP before calling, or the app becomes an
      * SMS-bombing tool. Keep the returned referenceNo server-side; never log it.
      *
-     * @param array<string, mixed> $applicationMetaData
+     * Both extras are optional and omitted when empty: json_encode turns an
+     * empty PHP array into [] — a JSON array where the platform expects an
+     * object.
+     *
+     * @param array<string, string> $applicationMetaData client, device, os, appCode
      *
      * @return array<string, mixed>
      */
-    public function requestOtp(string $subscriberId, array $applicationMetaData): array
-    {
-        return $this->post('otp-request', $this->config->requireEndpoint('otpRequest'), [
-            'subscriberId'        => self::toTelAddress($subscriberId),
-            'applicationMetaData' => $applicationMetaData,
-        ]);
+    public function requestOtp(
+        string $subscriberId,
+        array $applicationMetaData = [],
+        ?string $applicationHash = null
+    ): array {
+        $body = ['subscriberId' => self::toTelAddress($subscriberId)];
+        if ($applicationHash !== null && $applicationHash !== '') {
+            $body['applicationHash'] = $applicationHash;
+        }
+        if ($applicationMetaData !== []) {
+            $body['applicationMetaData'] = array_map(
+                static fn ($value): string => (string) $value,
+                $applicationMetaData
+            );
+        }
+
+        return $this->post('otp-request', $this->config->requireEndpoint('otpRequest'), $body);
     }
 
     /**
@@ -464,7 +521,7 @@ final class ApplinkClient
             $this->config->requireEndpoint('caasOtpGeneration'),
             [
                 'externalTrxId'         => $externalTrxId,
-                'amount'                => $amount,
+                'amount'                => self::formatAmount($amount),
                 'paymentInstrumentName' => $paymentInstrumentName,
                 'subscriberId'          => self::toTelAddress($subscriberId),
                 // Capital C, as published. The balance endpoint uses lower case.

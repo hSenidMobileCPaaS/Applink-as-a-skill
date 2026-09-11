@@ -123,6 +123,19 @@ export function generateExternalTrxId(): string {
 }
 
 /**
+ * Money crosses the wire as a string with two decimal places, as the published
+ * sample does ("5.00"). Takes a decimal string — never a `number`, which cannot
+ * hold every amount exactly — and rejects anything finer than a poisha.
+ */
+export function formatAmount(amount: string): string {
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(amount.trim());
+  if (!match || /^0+(\.0+)?$/.test(amount.trim())) {
+    throw new Error(`[applink] amount must be a positive decimal string such as "5.00", got "${amount}"`);
+  }
+  return `${match[1]}.${(match[2] ?? "").padEnd(2, "0")}`;
+}
+
+/**
  * Applink publishes no benign "already registered" code, so the desired state
  * is read from subscriptionStatus. The published samples include a trailing
  * dot ("UNREGISTERED."), hence the prefix comparison.
@@ -413,7 +426,7 @@ export function startCharge(input: {
     requireEndpoint("caasOtpGeneration"),
     {
       externalTrxId: input.externalTrxId,
-      amount: input.amount,
+      amount: formatAmount(input.amount),
       paymentInstrumentName: input.paymentInstrumentName ?? "Mobile Account",
       subscriberId: toTelAddress(input.subscriberId),
       // Capital C, as published. Lower-case is a different parameter on the

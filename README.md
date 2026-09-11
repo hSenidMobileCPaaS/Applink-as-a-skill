@@ -202,7 +202,8 @@ Return the number of subscribers currently registered to the application.
 | `show <id>` | What exactly does this call take and return? |
 | `search "<query>"` | Which service does the thing I want? |
 | `curl <id> [k=v]` | **Give me the call** — a runnable request, with the parameters and the response defined. |
-| `validate <id> '<json>'` | Is this payload correct? |
+| `validate <id> '<json>'` | Is this payload correct — types, field names and all? |
+| `response <id> ['<json>']` | What comes back, what do I persist, what happens next — and what did this real response mean? |
 | `code <statusCode>` | What does this error mean, and what do I do? |
 | `diagnose "<symptom>"` | Why is this not working? |
 | `practices [severity]` | What must I not get wrong? |
@@ -237,7 +238,7 @@ return.
 
 ```bash
 curl -sS -X POST "$APPLINK_CAAS_DEBIT_URL" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json;charset=utf-8' \
   --max-time 15 \
   -d @- <<REQUEST
 {

@@ -16,6 +16,7 @@
  *   search <query>                                   Search everything
  *   curl <id> [key=value ...]                        Runnable request + definitions
  *   validate <id> <json|@file|->                     Check a payload
+ *   response <id> [json|@file|-]                     Expected response, or read one
  *   practices [severity]                             Security/reliability rules
  *   checklist                                        Go-live checklist
  *   reference <doc>                                  Print a reference doc
@@ -27,10 +28,13 @@ import { readFileSync } from "node:fs";
 import {
   allEntries,
   buildPayload,
+  callbackReplayCurl,
   catalog,
   diagnose,
   findEntry,
+  interpretResponse,
   lookupStatusCode,
+  parseCliValues,
   readReference,
   search,
   toCurl,
@@ -151,7 +155,7 @@ function cmdShow() {
     console.log(`\n  ${bold(d.kind === "service" ? "Request parameters" : "Payload fields")}`);
     for (const p of spec) {
       const req = p.required ? red("required") : dim("optional");
-      const en = p.enum ? dim(`  [${p.enum.join(" | ")}]`) : "";
+      const en = p.enum ? dim(`  [${p.enum.map((v) => JSON.stringify(v)).join(" | ")}]`) : "";
       console.log(`    ${cyan(p.name.padEnd(24))} ${p.type.padEnd(10)} ${req}${en}`);
       console.log(`      ${dim(p.description)}`);
     }
@@ -171,6 +175,7 @@ function cmdShow() {
     if (d.sampleResponse) {
       console.log(`\n  ${bold("Sample response")}`);
       console.log(indent(JSON.stringify(d.sampleResponse, null, 2), 4));
+      if (d.responseHandling) printHandling(d.responseHandling);
     } else if (d.kind === "callback") {
       console.log(`\n  ${bold("You must respond")}`);
       console.log(indent(JSON.stringify(catalog.conventions.callbackAck, null, 2), 4));
@@ -269,7 +274,7 @@ function cmdCurl() {
       incomingPayload: entry.samplePayload,
       yourResponse: catalog.conventions.callbackAck,
       dedupeKey: entry.dedupeKey,
-      testCommand: `curl -X POST 'http://localhost:3000${entry.suggestedPath}' \\\n  --header 'Content-Type: application/json' \\\n  --data '${JSON.stringify(entry.samplePayload)}'`,
+      testCommand: callbackReplayCurl(entry),
       reference: "references/13-curl-reference.md",
     };
     return out(data, (d) => {
@@ -287,22 +292,13 @@ function cmdCurl() {
     });
   }
 
-  const values = {};
-  for (const pair of rest.slice(1)) {
-    const idx = pair.indexOf("=");
-    if (idx === -1) continue;
-    const key = pair.slice(0, idx);
-    const raw = pair.slice(idx + 1);
-    try {
-      values[key] = JSON.parse(raw);
-    } catch {
-      values[key] = raw;
-    }
-  }
+  const parsed = parseCliValues(entry, rest.slice(1));
+  if (parsed.errors.length) fail(parsed.errors.join("; "));
 
-  const payload = buildPayload(entry, values);
+  const payload = buildPayload(entry, parsed.values);
   const validation = validatePayload(entry, payload);
   const curl = toCurl(entry, payload);
+  const handling = entry.responseHandling;
 
   const data = {
     service: entry.id,
@@ -313,8 +309,10 @@ function cmdCurl() {
     parameters: entry.parameters,
     payload,
     curl,
+    expectedStatusCodes: handling?.expect ?? ["S1000"],
     sampleResponse: entry.sampleResponse,
     responseFields: entry.responseFields,
+    responseHandling: handling,
     validation,
     rules: entry.rules,
     reference: "references/13-curl-reference.md",
@@ -324,19 +322,21 @@ function cmdCurl() {
     console.log(`\n  ${bold(d.name)}  ${dim(d.endpoint)}`);
     console.log(`  ${dim(`endpoint variable ${d.envVar}`)}\n`);
 
-    console.log(`  ${bold("Parameters")}`);
+    console.log(`  ${bold("Parameters")}  ${dim("every value is a JSON string unless shown as an array or object")}`);
     for (const p of d.parameters) {
       const req = p.required ? red("required") : dim("optional");
-      const en = p.enum ? dim(`  [${p.enum.join(" | ")}]`) : "";
+      const en = p.enum ? dim(`  [${p.enum.map((v) => JSON.stringify(v)).join(" | ")}]`) : "";
       console.log(`    ${cyan(p.name.padEnd(22))} ${p.type.padEnd(8)} ${req}${en}`);
       console.log(`      ${dim(p.description)}`);
     }
 
     console.log(`\n  ${bold("Request")}\n`);
+    console.log(indent(`export ${d.envVar}='${d.url}'`, 2));
     console.log(indent(d.curl, 2));
 
     if (d.sampleResponse) {
-      console.log(`\n  ${bold("Response")}  ${dim("HTTP 200 — success is statusCode S1000, nothing else")}\n`);
+      const codes = d.expectedStatusCodes.map((c) => `"${c}"`).join(" or ");
+      console.log(`\n  ${bold("Response")}  ${dim(`HTTP 200 — the expected outcome is statusCode ${codes}`)}\n`);
       console.log(indent(JSON.stringify(d.sampleResponse, null, 2), 4));
     }
     if (d.responseFields?.length) {
@@ -345,6 +345,7 @@ function cmdCurl() {
         console.log(`    ${cyan(f.name.padEnd(22))} ${dim(f.description)}`);
       }
     }
+    if (d.responseHandling) printHandling(d.responseHandling);
 
     console.log();
     if (!d.validation.valid) {
@@ -353,8 +354,81 @@ function cmdCurl() {
     }
     d.validation.warnings.forEach((w) => console.log(`  ${yellow("!")} ${w}`));
     console.log(`\n  ${dim("Credentials are env placeholders — export them, do not paste them in.")}`);
+    console.log(`  ${dim(`Check what comes back: applink response ${d.service} '<response json>'`)}`);
     console.log(`  ${dim(`Every endpoint in this form: ${d.reference}`)}\n`);
   });
+  if (!validation.valid) process.exitCode = 1;
+}
+
+function printHandling(h) {
+  console.log(`\n  ${bold("Handling the response")}`);
+  console.log(`    ${green("on")} ${h.expect.join(" / ")}  ${h.outcome}`);
+  if (h.persist?.length) h.persist.forEach((p) => console.log(`    ${cyan("persist")} ${p}`));
+  if (h.next) console.log(`    ${cyan("next")}    ${h.next}`);
+  console.log(`    ${red("else")}    ${dim("Rely on statusCode and statusDetail only — decode with applink code <statusCode>.")}`);
+}
+
+function cmdResponse() {
+  const [id, source] = rest;
+  if (!id) fail("usage: applink response <id> [<response json>|@file|-]");
+  const entry = findEntry(id);
+  if (!entry) fail(`Unknown service "${id}".`, { available: allEntries().map((e) => e.id) });
+  if (entry.kind === "callback") {
+    fail(`${entry.name} is inbound — you do not receive a response, you send one: ${JSON.stringify(catalog.conventions.callbackAck)}`);
+  }
+
+  if (!source) {
+    const data = {
+      service: entry.id,
+      expectedStatusCodes: entry.responseHandling?.expect ?? ["S1000"],
+      sampleResponse: entry.sampleResponse,
+      responseFields: entry.responseFields,
+      responseHandling: entry.responseHandling,
+      reading: catalog.conventions.responseEnvelope.reading,
+    };
+    return out(data, (d) => {
+      console.log(`\n  ${bold(entry.name)}  ${dim("— what comes back")}\n`);
+      console.log(indent(JSON.stringify(d.sampleResponse, null, 2), 4));
+      console.log(`\n  ${bold("Response fields")}`);
+      for (const f of d.responseFields || []) console.log(`    ${cyan(f.name.padEnd(22))} ${f.type.padEnd(9)} ${dim(f.description)}`);
+      if (d.responseHandling) printHandling(d.responseHandling);
+      console.log(`\n  ${bold("Reading any Applink response")}`);
+      d.reading.forEach((r) => console.log(`    ${dim("·")} ${r}`));
+      console.log(`\n  ${dim(`Paste a real body to check it: applink response ${entry.id} '<json>'`)}\n`);
+    });
+  }
+
+  let raw = source;
+  if (source === "-") raw = readFileSync(0, "utf8");
+  else if (source.startsWith("@")) raw = readFileSync(source.slice(1), "utf8");
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch (err) {
+    fail(`Response is not valid JSON: ${err.message}. A non-JSON body means something other than Applink answered — a proxy, WAF or HTML error page.`);
+  }
+
+  const result = interpretResponse(entry, body);
+  out(result, (r) => {
+    console.log();
+    const colour = { success: green, pending: cyan, partial: yellow, "processed-not-in-desired-state": yellow }[r.outcome] || red;
+    console.log(`  ${colour(bold(r.outcome.toUpperCase()))}  ${r.statusCode ?? ""}  ${dim(r.statusDetail ?? "")}`);
+    if (r.meaning) console.log(`  ${r.meaning}`);
+    if (r.outcome === "failure") {
+      console.log(`  ${dim(`class ${r.class}${r.publishedForEndpoint ? "" : " · not in this endpoint's published list"}`)}`);
+      console.log(`  ${bold("Action")}  ${r.action}`);
+    }
+    for (const x of r.perRecipient || []) {
+      const ok = x.statusCode === "S1000";
+      console.log(`    ${ok ? green("✓") : red("✗")} ${x.address}  ${x.statusCode ?? "(no statusCode)"}${x.subscriptionStatus ? `  ${x.subscriptionStatus}` : ""}`);
+    }
+    r.problems.forEach((p) => console.log(`  ${red("✗")} ${p}`));
+    r.notes.forEach((n) => console.log(`  ${yellow("!")} ${n}`));
+    if (r.persist?.length) r.persist.forEach((p) => console.log(`  ${cyan("persist")} ${p}`));
+    if (r.next) console.log(`  ${cyan("next")}    ${r.next}`);
+    console.log();
+  });
+  if (result.outcome === "not-applink" || result.problems.length) process.exitCode = 1;
 }
 
 function cmdValidate() {
@@ -485,6 +559,8 @@ function cmdHelp() {
     curl <id> [key=value ...]                        Runnable request + parameter and
                                                      response definitions
     validate <id> <json|@file|->                     Check a payload against the spec
+    response <id> [json|@file|-]                     What comes back and how to handle it;
+                                                     with a body, check a real response
 
     Every endpoint and callback in that form, filled in and explained, is
     references/13-curl-reference.md. Translate the request into the host project's HTTP
@@ -509,6 +585,8 @@ function cmdHelp() {
     ${dim("$")} node tools/applink.mjs validate sms-send '{"message":"hi","destinationAddresses":"tel:8801959979376"}'
     ${dim("$")} node tools/applink.mjs curl caas-otp-generation externalTrxId=ORD-1001 amount=5.00
     ${dim("$")} node tools/applink.mjs curl caas-otp-verify
+    ${dim("$")} node tools/applink.mjs response caas-otp-generation
+    ${dim("$")} node tools/applink.mjs response subscription-register '{"statusCode":"S1000","subscriptionStatus":"REG_PENDING"}'
     ${dim("$")} node tools/applink.mjs reference 13-curl-reference
 
   ${dim("Add --json to any command for machine-readable output.")}
@@ -538,6 +616,8 @@ const COMMANDS = {
   build: cmdCurl,
   validate: cmdValidate,
   check: cmdValidate,
+  response: cmdResponse,
+  interpret: cmdResponse,
   practices: cmdPractices,
   checklist: cmdChecklist,
   reference: cmdReference,

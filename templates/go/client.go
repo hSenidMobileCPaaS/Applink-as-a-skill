@@ -149,6 +149,25 @@ func MaskAddress(address string) string {
 	return "tel:" + body[:3] + strings.Repeat("*", len(body)-6) + body[len(body)-3:]
 }
 
+var amountPattern = regexp.MustCompile(`^(\d+)(?:\.(\d{1,2}))?$`)
+var zeroAmount = regexp.MustCompile(`^0+(\.0+)?$`)
+
+// FormatAmount renders a decimal string the way the published sample does, with
+// two decimal places ("5" becomes "5.00"), and rejects anything that is not a
+// positive amount in whole poisha.
+func FormatAmount(amount string) (string, error) {
+	trimmed := strings.TrimSpace(amount)
+	match := amountPattern.FindStringSubmatch(trimmed)
+	if match == nil || zeroAmount.MatchString(trimmed) {
+		return "", fmt.Errorf("[applink] amount must be a positive decimal string such as \"5.00\", got %q", amount)
+	}
+	fraction := match[2]
+	for len(fraction) < 2 {
+		fraction += "0"
+	}
+	return match[1] + "." + fraction, nil
+}
+
 // GenerateExternalTrxID returns a unique, persistable idempotency key for a
 // charge.
 func GenerateExternalTrxID() (string, error) {
@@ -385,8 +404,16 @@ func (c *Client) QueryBase(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	size, _ := data["baseSize"].(string) // documented as a string
-	parsed, err := strconv.ParseInt(size, 10, 64)
+	// Documented as a string; accept a bare number too, so a platform-side
+	// change cannot break the parser.
+	var size string
+	switch v := data["baseSize"].(type) {
+	case string:
+		size = v
+	case float64:
+		size = strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	parsed, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("[applink] unexpected baseSize %q", size)
 	}
@@ -410,10 +437,13 @@ func (c *Client) RequestOTP(
 	if err != nil {
 		return nil, err
 	}
-	return c.post(ctx, "otp-request", url, map[string]any{
-		"subscriberId":        address,
-		"applicationMetaData": metaData,
-	})
+	body := map[string]any{"subscriberId": address}
+	// Optional. A nil map would marshal as "applicationMetaData": null — omit it
+	// instead of sending a value the platform has to reject.
+	if len(metaData) > 0 {
+		body["applicationMetaData"] = metaData
+	}
+	return c.post(ctx, "otp-request", url, body)
 }
 
 // VerifyOTP verifies an OTP. Valid five minutes — enforce that on your side
@@ -453,6 +483,10 @@ func (c *Client) StartCharge(
 	if externalTrxID == "" {
 		return nil, fmt.Errorf("[applink] externalTrxId is required and must be persisted first")
 	}
+	formatted, err := FormatAmount(amount)
+	if err != nil {
+		return nil, err
+	}
 	url, err := c.config.RequireEndpoint("caasOtpGeneration")
 	if err != nil {
 		return nil, err
@@ -466,7 +500,7 @@ func (c *Client) StartCharge(
 	}
 	return c.post(ctx, "caas-otp-generation", url, map[string]any{
 		"externalTrxId":         externalTrxID,
-		"amount":                amount,
+		"amount":                formatted,
 		"paymentInstrumentName": paymentInstrumentName,
 		"subscriberId":          address,
 		// Capital C, as published. The balance endpoint uses lower case.

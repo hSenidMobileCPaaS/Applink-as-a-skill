@@ -55,6 +55,13 @@ project's own HTTP client, one wrapper per service, and put the seven components
 `references/11-any-stack.md` around them. Run the curl first — a payload proven by hand is one
 you cannot get wrong in code.
 
+The body each wrapper builds: every value a JSON string (`"amount": "5.00"`, `"action": "1"`,
+never a number), exactly that endpoint's parameters (`version` on SMS and USSD only), optional
+fields omitted rather than sent as `null` or empty. The response each wrapper returns: decided
+by `statusCode` against the endpoint's expected code, every other field read with a default,
+numbers parsed from strings at the boundary. Each endpoint's *Handling the response* section in
+the curl reference says what to persist and what comes next.
+
 Three things the wrappers must get right, and that a naive port gets wrong:
 
 - **Charging is two wrappers.** `startCharge()` → `/caas/direct/debit`, returning `P1003` and a
@@ -85,6 +92,7 @@ Half the integration is inbound, and for charging it is where the outcome lives.
 
 ```bash
 node tools/applink.mjs validate <id> '<payload you generated>'
+node tools/applink.mjs response <id> '<response you got back>'
 ./scripts/smoke-test.sh          # or .\scripts\smoke-test.ps1
 ```
 

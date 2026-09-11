@@ -63,6 +63,7 @@ node tools/applink.mjs show <id>                    # full contract: params, res
 node tools/applink.mjs search "<query>"             # find by intent, e.g. "base size"
 node tools/applink.mjs curl <id> [key=value ...]    # runnable request + param/response defs
 node tools/applink.mjs validate <id> '<json>'       # check a payload against the spec
+node tools/applink.mjs response <id> ['<json>']     # expected response + handling; check a real one
 node tools/applink.mjs code <statusCode>            # decode a status code + the fix
 node tools/applink.mjs diagnose "<symptom>"         # cause and fix from a symptom
 node tools/applink.mjs practices [severity]         # security and reliability rules
@@ -77,8 +78,8 @@ data. The CLI is a documentation reader, not part of the integration, and constr
 about the stack you build in.
 
 **Use them in this order:** `search` or `list` to find the service → `show` for the exact
-contract → the curl reference for the call → `validate` the payload → `code` / `diagnose` when
-something fails.
+contract → the curl reference for the call → `validate` the payload your code builds →
+`response` for what comes back and how to handle it → `code` / `diagnose` when something fails.
 
 ### Write the call from the contract, not from memory
 
@@ -168,15 +169,36 @@ Each of these as a runnable request, with every parameter and response field def
 POST {baseUrl}/{path}
 Content-Type: application/json;charset=utf-8
 
-{ "applicationId": "APP_000375", "password": "…", "version": "1.0", …fields… }
+{ "applicationId": "APP_000375", "password": "…", …that endpoint's fields, all strings… }
 ```
 
 ```json
-{ "statusCode": "S1000", "statusDetail": "Success.", "version": "1.0" }
+{ "statusCode": "S1000", "statusDetail": "Success." }
 ```
 
 So: **one `post()` helper that injects credentials, plus thin wrappers per service.** Do not
 write bespoke HTTP calls per endpoint, in any language.
+
+**The request body:**
+
+- Every value is a JSON string — `"action": "1"`, `"amount": "5.00"`, `"version": "1.0"`,
+  `"encoding": "440"`. A number type turns a 31-digit `requestCorrelator` into
+  `8.80144223314617e+30`. Only `destinationAddresses` / `subscriberIds` are arrays of strings,
+  and only `applicationMetaData` is an object of strings.
+- Send exactly that endpoint's parameters: `version` is on SMS Send and USSD Send only; names are
+  case-sensitive (`Currency` on the charge, `currency` on the balance query).
+- Omit optional fields you have no value for — never `null`, `""`, `{}` or `[]`.
+- Build a map of strings and let the JSON library serialise it; never concatenate JSON.
+
+**The response:**
+
+- Decide from `statusCode` against that endpoint's expected outcome — `S1000`, except `P1003`
+  on CaaS OTP Generation. Each endpoint in the curl reference says what to read, what to
+  persist and what comes next.
+- On any other code, rely on `statusCode` and `statusDetail` only; other fields may be absent.
+- Every value arrives as a string (`baseSize`, `chargeableBalance`): parse at the boundary,
+  read fields with defaults, ignore unknown fields, compare `subscriptionStatus` by prefix, and
+  check each `destinationResponses` entry.
 
 **Addressing** — always `tel:`-prefixed, no spaces:
 
@@ -207,6 +229,11 @@ Normalise in one helper. Never concatenate `tel:` inline.
   `subscriptionStatus` from the register/unregister response instead.
 - ❌ Using a status code outside the twenty-nine published ones.
 - ❌ `destinationAddresses: "tel:880…"` — it is always an **array**.
+- ❌ A number anywhere in a request body — `"amount": 5`, `"action": 1`, `"version": 1.0`.
+  Every value is a string.
+- ❌ `"version"` on subscription, OTP or CaaS requests — it is an SMS / USSD parameter only.
+- ❌ `"currency"` on CaaS OTP Generation (it is `Currency`), or `"Currency"` on Query Balance
+  (it is `currency`).
 - ❌ Sending `subscriberId` instead of `subscriberIds` to `getSubscriberChargingInfo`, or more
   than ten at a time.
 - ❌ Logging the subscriber notification's raw body — **it contains your `password`**.

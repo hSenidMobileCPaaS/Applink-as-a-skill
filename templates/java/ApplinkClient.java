@@ -3,6 +3,7 @@ package com.example.applink;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -164,6 +165,23 @@ public final class ApplinkClient {
   /** A unique, persistable idempotency key for a charge. Max 32 characters. */
   public static String generateExternalTrxId() {
     return UUID.randomUUID().toString().replace("-", "");
+  }
+
+  /**
+   * Money crosses the wire as a string with two decimal places, as the published sample does
+   * ("5.00"). {@code setScale} with {@code UNNECESSARY} throws rather than silently rounding an
+   * amount finer than a poisha.
+   */
+  public static String formatAmount(BigDecimal amount) {
+    if (amount == null || amount.signum() <= 0) {
+      throw new IllegalArgumentException("[applink] amount must be positive, got " + amount);
+    }
+    try {
+      return amount.setScale(2, RoundingMode.UNNECESSARY).toPlainString();
+    } catch (ArithmeticException e) {
+      throw new IllegalArgumentException(
+          "[applink] amount has more than two decimal places: " + amount.toPlainString(), e);
+    }
   }
 
   /* ── Core ───────────────────────────────────────────────────────────────── */
@@ -335,14 +353,17 @@ public final class ApplinkClient {
    *
    * <p>Rate-limit per number AND per IP before calling, or the app becomes an SMS-bombing tool.
    * Keep the returned referenceNo server-side; never log it.
+   *
+   * <p>{@code applicationMetaData} is optional — pass {@code null} or an empty map and it is
+   * left out of the body. ({@code Map.of} rejects a null value, so it is never used here.)
    */
-  public JsonNode requestOtp(String subscriberId, Map<String, Object> applicationMetaData) {
-    return post(
-        "otp-request",
-        config.requireEndpoint("otpRequest"),
-        Map.of(
-            "subscriberId", toTelAddress(subscriberId),
-            "applicationMetaData", applicationMetaData));
+  public JsonNode requestOtp(String subscriberId, Map<String, String> applicationMetaData) {
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("subscriberId", toTelAddress(subscriberId));
+    if (applicationMetaData != null && !applicationMetaData.isEmpty()) {
+      body.put("applicationMetaData", applicationMetaData);
+    }
+    return post("otp-request", config.requireEndpoint("otpRequest"), body);
   }
 
   /**
@@ -386,7 +407,7 @@ public final class ApplinkClient {
     }
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("externalTrxId", externalTrxId);
-    body.put("amount", amount.toPlainString());
+    body.put("amount", formatAmount(amount));
     body.put(
         "paymentInstrumentName",
         paymentInstrumentName == null ? "Mobile Account" : paymentInstrumentName);

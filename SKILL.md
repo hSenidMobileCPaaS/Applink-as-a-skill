@@ -76,6 +76,7 @@ node tools/applink.mjs show <id>                    # full contract: params, res
 node tools/applink.mjs search "<query>"             # find by intent, e.g. "base size"
 node tools/applink.mjs curl <id> [key=value ...]    # runnable request + param/response defs
 node tools/applink.mjs validate <id> '<json>'       # check a payload against the spec
+node tools/applink.mjs response <id> ['<json>']     # expected response + handling; check a real one
 node tools/applink.mjs code <statusCode>            # decode a status code + the fix
 node tools/applink.mjs diagnose "<symptom>"         # cause and fix from a symptom
 node tools/applink.mjs practices [severity]         # security and reliability rules
@@ -116,7 +117,39 @@ the Applink contract — which is why the contract, the curl reference and the t
 things kept current. Write the code in the project's own conventions, from the contract.
 
 **Working order:** `search`/`list` to find the service → `show` for the exact contract → the
-curl reference for the call → `validate` the payload → `code`/`diagnose` when something fails.
+curl reference for the call → `validate` the payload your code builds → `response` for what
+comes back and how to handle it → `code`/`diagnose` when something fails.
+
+### Getting the body right the first time
+
+The mistakes that turn a correct-looking call into `E1312`, `E1855` or a silently ignored field:
+
+- **Every value is a JSON string.** `"action": "1"`, `"amount": "5.00"`, `"version": "1.0"`,
+  `"encoding": "440"` — never `1`, `5`, `1.0` or `440`. Identifiers such as `requestCorrelator`
+  are 31 digits long; a number type turns them into `8.80144223314617e+30`. Only
+  `destinationAddresses` and `subscriberIds` are arrays (of strings), and only
+  `applicationMetaData` is an object (of strings).
+- **Send exactly that endpoint's parameters.** `version` belongs to SMS Send and USSD Send only.
+  Names are case-sensitive and differ on purpose: `Currency` (charge) vs `currency` (balance),
+  `destinationAddresses` (SMS, array) vs `destinationAddress` (USSD), `subscriberIds` (charging
+  info) vs `subscriberId`, and CaaS OTP Verification names the subscriber `sourceAddress`.
+- **Omit an optional field you have no value for** — never send it as `null`, `""`, `{}` or `[]`
+  (PHP's `json_encode([])` is `[]`, an array where an object belongs).
+- **Build the body as a map of strings and let the JSON library serialise it.** Never assemble
+  JSON by string concatenation.
+
+### Reading the response
+
+- Decide from `statusCode` against **that endpoint's expected outcome** — `S1000` everywhere
+  except CaaS OTP Generation, where it is `P1003`. Each endpoint in the curl reference has a
+  *Handling the response* section: what to read, what to persist, and the next step.
+- On any other code, rely on `statusCode` and `statusDetail` only; the endpoint's own fields may
+  be absent.
+- Every response value is a string, numbers included — parse `baseSize` to an integer and money
+  to a decimal type at the boundary. Read every field except `statusCode` with a default, and
+  ignore unknown fields.
+- `subscriptionStatus` carries a trailing dot in the samples (`"UNREGISTERED."`): compare by
+  prefix. `destinationResponses` can partially fail under a top-level `S1000`: check each entry.
 
 **Whole-integration order:** [references/12-implementation-playbook.md](references/12-implementation-playbook.md)
 takes a project from nothing to production, and covers the three starting points — greenfield,
@@ -209,13 +242,14 @@ Every outbound API is the same shape. Learn it once:
 POST https://api.applink.com.bd/<service-path>
 Content-Type: application/json;charset=utf-8
 
-{ "applicationId": "APP_000375", "password": "…", "version": "1.0", …service fields… }
+{ "applicationId": "APP_000375", "password": "…", …that endpoint's fields, all strings… }
 ```
 
-Every response is HTTP 200 with:
+(`"version": "1.0"` is one of those fields on SMS Send and USSD Send only.) Every response is
+HTTP 200 with:
 
 ```json
-{ "statusCode": "S1000", "statusDetail": "Success.", "version": "1.0", … }
+{ "statusCode": "S1000", "statusDetail": "Success.", … }
 ```
 
 So the correct client, in every language, is one `post(path, payload)` helper that injects

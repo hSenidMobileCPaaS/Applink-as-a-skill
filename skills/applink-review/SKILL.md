@@ -26,6 +26,17 @@ findings with `file:line`, most severe first. Do not report style opinions — o
 ## High
 
 - `destinationAddresses` passed as a string rather than an array.
+- A request value typed as a number or boolean — `amount`, `action`, `version`, `encoding`,
+  `deliveryStatusRequest`, `otp`, `sessionId`, or an identifier such as `requestCorrelator`
+  held in a numeric column or type. Every value on the wire is a string.
+- An optional field sent as `null`, `""`, `{}` or `[]` instead of omitted (PHP `json_encode([])`,
+  Go nil maps, Java `Map.of` with a null value, C# nullable properties without an ignore rule).
+- A field that belongs to another endpoint: `version` outside SMS/USSD, `currency` on the
+  charge, `Currency` on the balance query, `destinationAddress` on SMS, `subscriberId` on
+  CaaS OTP Verification (it is `sourceAddress`).
+- A response model that makes endpoint fields required, or parses `baseSize` /
+  `chargeableBalance` as numbers without accepting the string they arrive as — a failure body
+  carries only `statusCode` and `statusDetail`.
 - A status code outside the twenty-nine published ones in the error handling — most often an
   invented "already registered" or "already completed" code carried over from another platform.
 - Register/unregister success decided on an error code instead of `subscriptionStatus`.

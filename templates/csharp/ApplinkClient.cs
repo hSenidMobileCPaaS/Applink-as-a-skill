@@ -149,6 +149,22 @@ public sealed class ApplinkClient
     /// <summary>A unique, persistable idempotency key for a charge. Max 32 characters.</summary>
     public static string GenerateExternalTrxId() => Guid.NewGuid().ToString("N");
 
+    /// <summary>
+    /// Money crosses the wire as a string with two decimal places, as the published sample does
+    /// ("5.00"). <c>decimal.ToString()</c> alone keeps whatever scale the value happens to carry,
+    /// so it can send "5" or "5.000". Rejects anything finer than a poisha rather than rounding.
+    /// </summary>
+    public static string FormatAmount(decimal amount)
+    {
+        if (amount <= 0 || decimal.Round(amount, 2) != amount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(amount), amount, "[applink] amount must be positive with at most two decimal places");
+        }
+
+        return amount.ToString("0.00", CultureInfo.InvariantCulture);
+    }
+
     /* ── Core ─────────────────────────────────────────────────────────────── */
 
     private async Task<JsonElement> PostAsync(
@@ -239,6 +255,7 @@ public sealed class ApplinkClient
             _options.RequireEndpoint("SmsSend"),
             new Dictionary<string, object?>
             {
+                ["version"] = ApiVersion,
                 ["message"] = message,
                 ["destinationAddresses"] = new[] { "tel:all" },
             },
@@ -361,7 +378,11 @@ public sealed class ApplinkClient
             new Dictionary<string, object?>(),
             cancellationToken).ConfigureAwait(false);
 
-        var raw = data.TryGetProperty("baseSize", out var value) ? value.GetString() : "0";
+        // Documented as a string; accept a bare number too, so a platform-side change cannot
+        // break the parser. GetString() throws on a number.
+        var raw = data.TryGetProperty("baseSize", out var value)
+            ? value.ValueKind == JsonValueKind.Number ? value.GetRawText() : value.GetString()
+            : "0";
         return long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var size)
             ? size
             : 0;
@@ -372,20 +393,23 @@ public sealed class ApplinkClient
     /// <summary>
     /// Send an OTP to a plain mobile number. Rate-limit per number AND per IP before calling,
     /// or the app becomes an SMS-bombing tool. Keep the returned referenceNo server-side.
+    ///
+    /// <para><paramref name="applicationMetaData"/> (client, device, os, appCode) is optional and
+    /// left out of the body when null or empty, rather than sent as <c>null</c>.</para>
     /// </summary>
     public Task<JsonElement> RequestOtpAsync(
         string subscriberId,
-        IDictionary<string, object?> applicationMetaData,
-        CancellationToken cancellationToken = default) =>
-        PostAsync(
-            "otp-request",
-            _options.RequireEndpoint("OtpRequest"),
-            new Dictionary<string, object?>
-            {
-                ["subscriberId"] = ToTelAddress(subscriberId),
-                ["applicationMetaData"] = applicationMetaData,
-            },
-            cancellationToken);
+        IDictionary<string, string>? applicationMetaData = null,
+        CancellationToken cancellationToken = default)
+    {
+        var body = new Dictionary<string, object?> { ["subscriberId"] = ToTelAddress(subscriberId) };
+        if (applicationMetaData is { Count: > 0 })
+        {
+            body["applicationMetaData"] = applicationMetaData;
+        }
+
+        return PostAsync("otp-request", _options.RequireEndpoint("OtpRequest"), body, cancellationToken);
+    }
 
     /// <summary>
     /// Verify an OTP. Valid five minutes — enforce that on your side too, and cap attempts
@@ -437,7 +461,7 @@ public sealed class ApplinkClient
             new Dictionary<string, object?>
             {
                 ["externalTrxId"] = externalTrxId,
-                ["amount"] = amount.ToString(CultureInfo.InvariantCulture),
+                ["amount"] = FormatAmount(amount),
                 ["paymentInstrumentName"] = paymentInstrumentName,
                 ["subscriberId"] = ToTelAddress(subscriberId),
                 // Capital C, as published. The balance endpoint uses lower case.

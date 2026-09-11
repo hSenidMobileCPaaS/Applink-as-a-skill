@@ -26,7 +26,7 @@ import ssl
 import urllib.error
 import urllib.request
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
 from applink_config import config
@@ -147,12 +147,22 @@ def has_subscription_status(response: Mapping[str, Any], expected: str) -> bool:
 
 def format_amount(amount: Union[Decimal, str]) -> str:
     """
-    Money crosses the wire as a string. Keep it in Decimal in your own code —
-    a float will eventually charge someone 99.99999 taka.
+    Money crosses the wire as a string with two decimal places, as the published
+    sample does ("5.00"). Keep it in Decimal in your own code — a float will
+    eventually charge someone 99.99999 taka — and note that str() of a Decimal
+    can produce "1E+1", which is why this formats explicitly.
     """
     if isinstance(amount, float):  # pragma: no cover - guard against a real bug
         raise TypeError("[applink] Use Decimal or str for money, never float")
-    return str(amount)
+    try:
+        value = Decimal(str(amount).strip())
+    except InvalidOperation as exc:
+        raise ValueError(f"[applink] amount is not a decimal: {amount!r}") from exc
+    if not value.is_finite() or value <= 0 or value != value.quantize(Decimal("0.01")):
+        raise ValueError(
+            f"[applink] amount must be positive with at most two decimal places, got {amount!r}"
+        )
+    return f"{value:.2f}"
 
 
 # ── Core ─────────────────────────────────────────────────────────────────────

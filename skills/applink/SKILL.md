@@ -15,9 +15,15 @@ JSON-over-HTTPS APIs. Charging is in **BDT** only.
 node tools/applink.mjs list                          # what exists
 node tools/applink.mjs show <id>                     # exact contract
 node tools/applink.mjs curl <id> [key=value ...]     # runnable request + param/response defs
-node tools/applink.mjs validate <id> '<json>'
+node tools/applink.mjs validate <id> '<json>'       # the body your code builds
+node tools/applink.mjs response <id> ['<json>']     # what comes back, and what to do with it
 node tools/applink.mjs code <statusCode>
 ```
+
+**Every request value is a JSON string** (`"amount": "5.00"`, `"action": "1"`), send only that
+endpoint's parameters (`version` is SMS/USSD only), and omit optional fields rather than sending
+`null`. **Decide the outcome from `statusCode`** against that endpoint's expected code — `S1000`,
+or `P1003` for CaaS OTP Generation — and read every other response field with a default.
 
 **`references/13-curl-reference.md` is where every call comes from** — every endpoint as a
 runnable curl, every parameter defined, the response and every response field, the status codes
