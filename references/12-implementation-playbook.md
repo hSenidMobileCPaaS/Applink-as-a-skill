@@ -128,7 +128,7 @@ Users already depend on this application. The integration must land without dist
 
 ## 4. Flow recipes
 
-The four flows that cover almost every Applink application. Each is a sequence of calls plus
+The five flows that cover almost every Applink application. Each is a sequence of calls plus
 the state you must keep.
 
 ### A. Keyword opt-in over SMS
@@ -210,6 +210,37 @@ step 3  charging notification callback   (charging-notification)
 Money is a decimal type end to end, and the currency is `BDT`. `queryBalance` is advisory only
 — handle `E1326` on the charging path regardless of what it said. **Never re-run step 1 to
 retry step 2**: that starts a second charge against a real person.
+
+### E. The returning user — your session, not another OTP
+
+Recipes A, B and C each end with a verified `subscriberId`. That is a **one-time binding**,
+not a login mechanism. Register, `/otp/request` and CaaS are transactional and cost money;
+re-running one to find out who a user is, or whether they may use the service, charges the
+subscriber, SMS-bombs them, and puts your sign-in path at the mercy of the platform.
+
+```
+once, at the end of A, B or C
+  → record consent, store subscriberId on the account
+  → mirror subscriptionStatus on that row + when it was last confirmed
+  → issue YOUR OWN session (cookie session, JWT, Django, Spring Security, a Laravel guard)
+
+every request afterwards — no Applink call at all
+  session → account → mirrored subscriptionStatus
+      REGISTERED / TRIAL     → serve
+      REG_PENDING            → "activating"; wait for the callback, do not re-register
+      TEMPORARY_BLOCKED      → billing failure: fix-payment path, not a logout
+      UNREGISTERED / INITIAL → fresh opt-in, with disclosure
+
+keeping the mirror true — out of band
+  subscriber notification callback → update it; this is the authoritative source
+  scheduled sweep (getSubscriberChargingInfo, ≤10 subscriberIds per call) → reconcile drift
+```
+
+A fresh OTP belongs to a genuine re-verification event — a new device, a changed number, a
+dormant account, a step-up before something sensitive — not to every login. And a live
+session is never authorisation to charge: every payment is its own CaaS flow, with its own
+`externalTrxId` and its own OTP. Full rules:
+[04-subscription §Identity and sessions](04-subscription.md#identity-and-sessions--subscribe-once-then-trust-your-own-session).
 
 ---
 

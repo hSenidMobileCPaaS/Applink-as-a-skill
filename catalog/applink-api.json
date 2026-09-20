@@ -1974,6 +1974,13 @@
       "reference": "references/02-sms.md"
     },
     {
+      "id": "session-not-an-auth-api",
+      "severity": "high",
+      "title": "Subscription, OTP and CaaS are transactions, not a login API",
+      "detail": "These endpoints charge money, send paid SMS and consume the per-second and per-day transaction limits every time they run. Use them once, to bind a verified subscriberId to an account with recorded consent; then issue the application's own session and decide entitlement from the local subscription mirror. No Applink call belongs on a login or page-load path. Reserve a fresh OTP for genuine re-verification (new device, changed number, step-up), and never treat a live session as authorisation to charge.",
+      "reference": "references/04-subscription.md"
+    },
+    {
       "id": "ussd-session-store",
       "severity": "medium",
       "title": "USSD session state must be shared across instances",
@@ -2005,7 +2012,7 @@
       "id": "local-subscription-mirror",
       "severity": "medium",
       "title": "Mirror subscription state locally",
-      "detail": "Consume the subscriber notification callback instead of calling Get Subscriber Charging Info on every request — it is capped at ten MSISDNs per call and is meant for reconciliation.",
+      "detail": "Consume the subscriber notification callback instead of calling Get Subscriber Charging Info on every request — it is capped at ten MSISDNs per call and is meant for reconciliation. Store the status and when it was last confirmed, update it from the subscriber notification, and reconcile stale rows on a schedule (getSubscriberChargingInfo, maximum ten per call) rather than in the request path.",
       "reference": "references/04-subscription.md"
     },
     {

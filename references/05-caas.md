@@ -54,6 +54,13 @@ will send to user." — read the second half.
 5. **A charge must be traceable to a user action.** Log who, what, when, how much, which
    `externalTrxId`, and what the user saw before they agreed.
 
+**The CaaS OTP is not a login.** It authorises *one* charge, and nothing else. An
+authenticated session says who the user is; it never says a payment may be taken, and a
+verified charge never stands in for a session. Bind the subscriber once through the
+subscription flow, log the user in with your own session, and start a fresh CaaS flow —
+new `externalTrxId`, new OTP — for every payment. See
+[04-subscription §Identity and sessions](04-subscription.md#identity-and-sessions--subscribe-once-then-trust-your-own-session).
+
 ---
 
 ## Step 1 — CaaS OTP Generation

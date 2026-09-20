@@ -401,6 +401,83 @@ Documented failures:
 
 ---
 
+## Identity and sessions — subscribe once, then trust your own session
+
+**This is the flow developers most often get wrong.** Register, OTP and CaaS all prove that a
+user controls a phone number, so they look like authentication. They are not authentication
+APIs — each one is a **transaction**. Register can trigger the initial charge, `/otp/request`
+sends a real SMS that costs money and is rate-limited, and CaaS moves money. Calling one of
+them to answer "who is this?" or "may this user in?" bills the subscriber, floods them with
+PINs, burns your transaction quota (`E1318` / `E1319`), and takes your login path down
+whenever the platform is slow.
+
+What the subscription flow gives you is a **one-time verified binding**: this account owns
+this `subscriberId`, and this user consented, at this moment, to this charge. Establish it
+once. Everything after that is answered locally.
+
+### Two questions, two different sources
+
+| Question | Where the answer comes from | Never |
+|---|---|---|
+| **Who is this user?** | Your own session and auth — cookie session, JWT, Django session, Spring Security, a Laravel guard, whatever the project already has | A fresh `/otp/request` + `/otp/verify` on every login |
+| **May they use the service right now?** | Your local subscription mirror, keyed by `subscriberId` | `getSubscriberChargingInfo` on the request path |
+| **Has their state changed?** | The subscriber notification callback, plus a scheduled reconciliation sweep | Polling per request or per page load |
+| **May I take this payment?** | A fresh CaaS charge, authorised per payment | Treating a live session — or an earlier OTP — as authorisation |
+
+### The flow
+
+```
+FIRST TIME ONLY — the binding
+  user opts in  (SMS keyword, USSD menu, or OTP request + verify)
+    → record consent: who, when, channel, wording shown, amount disclosed
+    → subscriberId comes back (opaque — store exactly as given)
+    → create or link the local account and store subscriberId on it
+    → mirror subscriptionStatus on that row, with the time it was confirmed
+    → ISSUE YOUR OWN SESSION. From here the user is logged in, by your system.
+
+EVERY REQUEST AFTER THAT — the entitlement check, zero Applink calls
+  session → account → the mirrored subscriptionStatus
+    REGISTERED / TRIAL      → serve the service
+    REG_PENDING             → "activation in progress"; wait for the callback, do not re-register
+    TEMPORARY_BLOCKED       → a billing failure, not a logout: show the fix-payment path
+    UNREGISTERED / INITIAL  → the re-subscribe screen (a fresh opt-in, with disclosure)
+
+STATE CHANGES — out of band, never in the request path
+  subscriber notification callback → update the mirror; this is the authority
+  scheduled sweep of getSubscriberChargingInfo (≤10 subscriberIds per call)
+                                   → reconcile rows whose mirror has gone stale
+```
+
+### Rules
+
+- **Nothing on the login or page-load path calls Applink.** If a user signing in causes an
+  outbound request to `api.applink.com.bd`, the design is wrong. Sign-in reads your session
+  store; entitlement reads your own database.
+- **Re-verify only on a genuine re-verification event** — a new device, a changed number, a
+  long-dormant account, or a step-up before something sensitive. That is what a fresh OTP is
+  for. Not every login, and never every request.
+- **A live session is not permission to charge.** Authentication and authorisation of money
+  are separate: every charge is its own CaaS flow with its own `externalTrxId` and its own
+  OTP, whatever the user's session says. See [05-caas.md](05-caas.md).
+- **Store when the mirror was last confirmed, and by what** — the notification or a sweep.
+  That timestamp is what makes reconciliation targetable and support answerable.
+- **When the mirror is stale or a lookup fails, serve the last known good state** and
+  reconcile in the background. Never block a request on a live Applink call, and never log a
+  user out because a lookup failed.
+- **`subscriberId` is a join key, not a session token.** Keep it on the account row. Do not
+  put it in a cookie or a JWT claim the client can replay — anyone who can set it would then
+  be able to act as that subscriber.
+- **Count the calls before you design a per-request check.** `getSubscriberChargingInfo` takes
+  ten MSISDNs per call and is meant for reconciliation; one OTP per login is one paid SMS per
+  login. Both hit the per-second and per-day transaction limits long before they hit your
+  traffic peak.
+
+Recipe E in [12-implementation-playbook.md](12-implementation-playbook.md#4-flow-recipes)
+writes this out as a sequence, and [07-callbacks.md](07-callbacks.md) is the contract for the
+notification that keeps the mirror honest.
+
+---
+
 Register, unregister, base size, charging info, OTP request and OTP verify as runnable curls —
 every parameter, response and response field defined:
 [13-curl-reference.md](13-curl-reference.md).

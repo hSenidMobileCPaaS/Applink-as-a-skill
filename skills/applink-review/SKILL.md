@@ -51,6 +51,11 @@ findings with `file:line`, most severe first. Do not report style opinions — o
 - Callback handler with no deduplication key.
 - Callback handler that trusts the body, or has no schema validation.
 - A callback returning non-200 on a malformed payload, which just triggers redelivery.
+- Applink called on a login, session-check or page-load path — `/otp/request` per sign-in,
+  `/subscription/send` used as a "does this user exist" probe, or `getSubscriberChargingInfo`
+  behind a middleware or route guard. These are paid transactions; entitlement belongs in a
+  local mirror fed by the subscriber notification, behind the project's own session.
+- A charge authorised by the presence of a session rather than by its own CaaS OTP flow.
 - `tel:all` reachable from an ordinary code path.
 - Secrets, OTPs, `referenceNo`, `requestCorrelator` or unmasked `subscriberId` in logs.
 

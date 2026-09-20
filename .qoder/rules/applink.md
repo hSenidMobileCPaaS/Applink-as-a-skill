@@ -147,6 +147,7 @@ platform. See [templates/.env.example](templates/.env.example).
 | Subscription status + last charge (max 10 MSISDNs) | `POST /subscription/getSubscriberChargingInfo` |
 | Subscriber notification | *your callback URL* |
 | OTP request / verify (subscription activation) | `POST /otp/request`, `POST /otp/verify` |
+| Log a **returning** user in / check entitlement | **no endpoint** — your own session plus the local subscription mirror |
 | **Start a charge** (sends the subscriber an OTP) | `POST /caas/direct/debit` |
 | **Complete the charge** (money moves here) | `POST /caas/otp/verify` |
 | Query balance (confirm it is enabled first) | `POST /caas/get/balance` |
@@ -242,6 +243,13 @@ Normalise in one helper. Never concatenate `tel:` inline.
   (it is `currency`).
 - ❌ Sending `subscriberId` instead of `subscriberIds` to `getSubscriberChargingInfo`, or more
   than ten at a time.
+- ❌ Using Applink as a login API — an `/otp/request` per sign-in, a `/subscription/send`
+  to "check" a user, or a `getSubscriberChargingInfo` on the request path. These are
+  **transactions**: they charge, they send paid SMS, and they count against `E1318` /
+  `E1319`. Bind the subscriber once, then issue your own session and read entitlement
+  from your local mirror.
+- ❌ Treating a live session as authorisation to charge — every payment is its own CaaS
+  flow, with its own `externalTrxId` and its own OTP.
 - ❌ Logging the subscriber notification's raw body — **it contains your `password`**.
 - ❌ Generating your own USSD `sessionId` — echo the platform's.
 - ❌ Ending a USSD flow with `mt-cont` — terminal screens use `mt-fin`.
@@ -278,7 +286,12 @@ Normalise in one helper. Never concatenate `tel:` inline.
   the payload carries it, deduplicate, and strip `password` before logging.
 - Log `requestId` / `sessionId` / `externalTrxId` / `internalTrxId` / `statusCode`; mask
   subscriber addresses.
-- Mirror subscription state locally from the subscriber notification instead of polling.
+- Mirror subscription state locally from the subscriber notification instead of polling,
+  and record when each row was last confirmed. Authenticate returning users with the
+  project's own session mechanism and gate the service on that mirror: sign-in and page
+  loads make no Applink call. Reserve a fresh OTP for real re-verification events — a new
+  device, a changed number, a step-up — and reconcile stale rows on a schedule with
+  `getSubscriberChargingInfo` (≤10 per call), out of the request path.
 - Use a decimal type for money — `BigDecimal`, `decimal.Decimal`, `decimal`, `bcmath`, a
   decimal library, or integer minor units. Never a binary float. Currency is `BDT`.
 - Match the host project's existing stack, structure and conventions.

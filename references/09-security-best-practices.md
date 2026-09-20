@@ -200,6 +200,11 @@ This is a compliance requirement, not a nicety — Applink suspends applications
   a USSD menu option, and an in-app control. Call Unregister and stop sending — including
   stopping any queued messages already scheduled.
 - **Never re-subscribe a user who opted out** without a fresh, separate opt-in.
+- **Consent is captured once, at opt-in — re-running the flow is not how you check it.**
+  Register, `/otp/request` and CaaS are paid transactions. After the subscription flow
+  completes, the user is logged in by *your* session and entitled according to *your*
+  subscription mirror; a session is never authorisation for a new charge. See
+  [04-subscription §Identity and sessions](04-subscription.md#identity-and-sessions--subscribe-once-then-trust-your-own-session).
 - **Never charge outside what the user agreed to.** Amount and currency come from server-side
   configuration or a server-side price lookup, never from client input.
 

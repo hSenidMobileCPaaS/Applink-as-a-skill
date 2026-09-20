@@ -228,6 +228,7 @@ user requests production approval.
 | Check status + last charge (≤10 MSISDNs) | Get Subscriber Charging Info | `POST /subscription/getSubscriberChargingInfo` | [04-subscription](references/04-subscription.md) |
 | Be told when a user subs/unsubs | Subscriber Notification | *your callback URL* | [04-subscription](references/04-subscription.md), [07-callbacks](references/07-callbacks.md) |
 | Activate a subscription from a web/app form | OTP Request → Verify | `POST /otp/request`, `POST /otp/verify` | [04-subscription](references/04-subscription.md) |
+| Know whether a **returning** user may use the service | Your own session + your local subscription mirror | **no call** — never re-run OTP or charging to log someone in | [04-subscription](references/04-subscription.md#identity-and-sessions--subscribe-once-then-trust-your-own-session) |
 | **Start** a mobile-account charge (sends an OTP) | CaaS OTP Generation | `POST /caas/direct/debit` | [05-caas](references/05-caas.md) |
 | **Complete** the charge (money moves) | CaaS OTP Verification | `POST /caas/otp/verify` | [05-caas](references/05-caas.md) |
 | Check a user can afford a charge | Query Balance | `POST /caas/get/balance` | [05-caas](references/05-caas.md) |
@@ -307,6 +308,12 @@ Normalise once, in one function, at the boundary. Never string-concatenate `tel:
 - **HTTP 200 ≠ success.** Branch on `statusCode`, always.
 - **`E1309` means not provisioned, not a code bug.** Calling a service the app was not
   provisioned for fails no matter how correct the payload is.
+- **Subscription, OTP and CaaS are transactions, not a login API.** They prove once that a
+  user controls a number; they charge money, send real SMS and count against the rate limits
+  every time they run. After the subscription flow completes, issue **your own** session and
+  answer "may this user in?" from your local subscription mirror — not by re-running OTP or
+  polling `getSubscriberChargingInfo` per request. See
+  [references/04-subscription.md](references/04-subscription.md#identity-and-sessions--subscribe-once-then-trust-your-own-session).
 - **There are no benign duplicate-state codes.** Applink publishes nothing meaning "already
   registered" or "transaction already completed". Read `subscriptionStatus` for subscription
   outcomes, and settle charges from the charging notification.
@@ -367,7 +374,8 @@ any language.
   are how Applink support traces an issue. Log the `statusCode`. **Never** log `password`, the
   OTP, `referenceNo` or `requestCorrelator`, and mask `subscriberId` in logs.
 - Persist subscription state locally from the subscriber notification; do not re-query per
-  request.
+  request. Authenticate returning users with the project's own session mechanism and gate
+  access on that mirror — a login or a page load must make no Applink call at all.
 - Make outbound calls retry-safe: retry only on transport errors and `E1601`/`E1602`/`E1603`,
   never on a definitive `E13xx`, and never anything on the charging path with a new identifier.
 - Match the host project's stack and conventions. These templates are a specification, not

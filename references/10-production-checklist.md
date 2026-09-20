@@ -43,6 +43,12 @@ provider something real.
 - [ ] USSD sessions terminated with `mt-fin`
 - [ ] USSD session store is shared across instances (not an in-process `Map`) and has a TTL
 - [ ] USSD screens are plain ASCII and under ~160 characters
+- [ ] Returning users are authenticated by the application's own session, not by re-running
+      OTP, Register or any other Applink call
+- [ ] Entitlement is read from the local subscription mirror — no Applink call on a login,
+      session-check or page-load path
+- [ ] The mirror records when each row was last confirmed, is updated from the subscriber
+      notification, and is reconciled on a schedule rather than per request
 - [ ] Explicit timeout on every outbound call
 - [ ] Retries only on transport errors and transient codes, with backoff and a cap
 

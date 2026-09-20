@@ -55,13 +55,18 @@ language**.
 6. **Charging is idempotent** on `externalTrxId`, persisted before the call, never re-rolled —
    and OTP generation is never re-run to retry a verification.
 
-## The three things agents get wrong
+## The four things agents get wrong
 
 1. **HTTP 200 is not success.** Applink returns 200 for application-level failures. Branch on
    `statusCode`.
 2. **`P1003` is not success either.** It means the OTP was dispatched. Nothing has been
    charged, and an order fulfilled on it is an order nobody paid for.
-3. **There are no benign duplicate-state codes.** Applink publishes nothing meaning "already
+3. **Applink is not a login API.** Register, `/otp/request` and CaaS are transactions: they
+   charge money, send paid SMS and count against the rate limits every time. Bind the
+   subscriber once, then issue the application's **own** session and decide entitlement from a
+   local subscription mirror fed by the subscriber notification. Nothing on a login or
+   page-load path calls Applink. `references/04-subscription.md` has the flow.
+4. **There are no benign duplicate-state codes.** Applink publishes nothing meaning "already
    registered" or "transaction already completed". Read `subscriptionStatus` from the
    register/unregister response, and settle charges from the charging notification. Do not
    invent codes outside the twenty-nine published ones.

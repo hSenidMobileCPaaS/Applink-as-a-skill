@@ -400,7 +400,7 @@ On plugin-tier hosts these are also slash commands: `/applink`, `/applink-review
 
 ## What it actually changes
 
-Ten mistakes agents make on this platform, and what each one costs:
+Eleven mistakes agents make on this platform, and what each one costs:
 
 | Mistake | Consequence |
 |---|---|
@@ -410,6 +410,7 @@ Ten mistakes agents make on this platform, and what each one costs:
 | Passing `externalTrxId` as `referenceNo` to `/caas/otp/verify` | Every charge confirmation fails with `E1855`. |
 | Inventing an "already registered" success code | Applink publishes none. Working flows reported as broken. |
 | `destinationAddresses: "tel:880…"` | It is always an **array**. Sends fail. |
+| Using OTP or subscription calls as a login check | They are paid transactions. **Every sign-in charges you an SMS**, floods the user with PINs and burns the rate limit — a session plus a local mirror is the answer. |
 | Hardcoded `applicationId` / `password` | A credential that can charge your subscribers, committed to git. |
 | Logging the subscriber notification body | **It contains your password.** Your API key, in your log aggregator, on every subscription change. |
 | USSD sessions in an in-process map, whatever the language | Works in dev, breaks the moment you scale. |
